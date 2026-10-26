@@ -1,0 +1,11 @@
+Nation 600 450
+Republique 500 250
+Chatelet 420 380
+Odeon 400 460
+Rochereau 350 560
+Gare_do_Norte 510 150
+Montparnasse 330 500
+Concorde 320 350
+Etoile 180 280
+Bastille 530 420
+Opera 360 270

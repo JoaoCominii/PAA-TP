@@ -1,0 +1,22 @@
+Linha1 amarela 4
+Bastille Nation
+Chatelet Bastille
+Concorde Chatelet
+Etoile Concorde
+Linha2 azul 3
+Nation Republique
+Republique Gare_do_Norte
+Gare_do_Norte Etoile
+Linha4 magenta 4
+Gare_do_Norte Republique
+Republique Chatelet
+Chatelet Odeon
+Odeon Rochereau
+Linha6 verde 3
+Etoile Montparnasse
+Montparnasse Rochereau
+Rochereau Nation
+Linha8 roxa 3
+Opera Concorde
+Concorde Republique
+Republique Bastille
