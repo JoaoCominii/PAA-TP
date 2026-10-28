@@ -132,9 +132,10 @@ def carregar_arquivo_estacoes(caminho_arquivo, grafo):
     """
     Lê o arquivo de estações no formato:
         NomeEstacao x y
-    Exemplo:
+    Exemplos aceitos:
         Nation 100 150
         Republique 50 100
+        Gare du Nord 510 150 (suporta nomes compostos com espaços ou underlines)
     """
     total_lidas = 0
     with open(caminho_arquivo, "r", encoding="utf-8") as f:
@@ -143,14 +144,19 @@ def carregar_arquivo_estacoes(caminho_arquivo, grafo):
             # Ignora linhas em branco ou comentários
             if not linha or linha.startswith("#"):
                 continue
-            partes = linha.split()
-            if len(partes) >= 3:
-                # O nome da estação pode conter underlines ou ser a primeira parte
-                nome = partes[0]
-                x = float(partes[1])
-                y = float(partes[2])
-                grafo.adicionar_estacao(nome, x, y)
-                total_lidas += 1
+            
+            # rsplit com maxsplit=2 garante que os dois últimos itens sejam as coordenadas x e y,
+            # e todo o restante inicial seja tratado como o nome da estação (mesmo com espaços).
+            partes = linha.rsplit(None, 2)
+            if len(partes) == 3:
+                nome = partes[0].strip()
+                try:
+                    x = float(partes[1])
+                    y = float(partes[2])
+                    grafo.adicionar_estacao(nome, x, y)
+                    total_lidas += 1
+                except ValueError:
+                    continue
     return total_lidas
 
 
@@ -164,10 +170,15 @@ def carregar_arquivo_linhas(caminho_arquivo, grafo):
         Linha1 azul 2
         Nation Republique
         Republique Chatelet
+        
+    Robustez:
+    - Suporta nomes compostos separados por espaço, tabulação ou casando com estações cadastradas.
     """
     total_trechos = 0
     with open(caminho_arquivo, "r", encoding="utf-8") as f:
         linhas = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+
+    estacoes_conhecidas = sorted(grafo.estacoes.keys(), key=lambda s: len(s), reverse=True)
 
     i = 0
     while i < len(linhas):
@@ -183,9 +194,33 @@ def carregar_arquivo_linhas(caminho_arquivo, grafo):
             i += 1
             lidos = 0
             while i < len(linhas) and lidos < qtd_trechos:
-                par = linhas[i].split()
-                if len(par) >= 2:
-                    u, v = par[0], par[1]
+                texto_trecho = linhas[i].strip()
+                u, v = None, None
+
+                # 1. Tentativa via delimitadores comuns (tabulação, ponto-e-vírgula ou hífen com espaços)
+                for delim in ["\t", ";", " - "]:
+                    if delim in texto_trecho:
+                        pedacos = texto_trecho.split(delim, 1)
+                        if len(pedacos) == 2:
+                            u, v = pedacos[0].strip(), pedacos[1].strip()
+                            break
+
+                # 2. Se não achou delimitador especial, tenta casar com as estações cadastradas
+                if not u and estacoes_conhecidas:
+                    for est in estacoes_conhecidas:
+                        if texto_trecho.startswith(est):
+                            resto = texto_trecho[len(est):].strip()
+                            if resto in grafo.estacoes:
+                                u, v = est, resto
+                                break
+
+                # 3. Fallback: split simples por espaços se forem duas palavras
+                if not u:
+                    par = texto_trecho.split()
+                    if len(par) >= 2:
+                        u, v = par[0], par[1]
+
+                if u and v:
                     grafo.adicionar_trecho(u, v, nome_linha, cor)
                     total_trechos += 1
                     lidos += 1
