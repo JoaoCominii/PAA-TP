@@ -17,6 +17,7 @@ from tkinter import ttk, filedialog, messagebox
 import time
 import math
 from collections import deque
+from itertools import permutations
 
 
 # ======================================================================================
@@ -210,46 +211,62 @@ Critérios de validade:
 
 def forca_bruta_maior_ciclo(grafo, inicio):
     """
-    ABORDAGEM 1: FORÇA BRUTA (Busca em Profundidade - DFS EXAUSTIVO COM BACKTRACKING)
+    ABORDAGEM 1: FORÇA BRUTA PURA (GENERATE-AND-TEST / PERMUTAÇÕES - SEM BACKTRACKING)
     
-    Explicações:
-    - Explora sistematicamente todos os caminhos possíveis a partir do nó inicial.
-    - Mantém um conjunto 'visitados' e uma lista 'caminho'.
-    - Se encontrar o nó inicial 'inicio' como vizinho e o caminho tiver tamanho >= 3,
-      registra um ciclo fechado válido.
-    - Como testa todas as permutações válidas, garante a solução ótima global,
-      mas tem complexidade de tempo fatorial no pior caso O(|V|!).
+    Explicação detalhada para a banca examinadora:
+    - Esta é a abordagem legítima e estrita de Força Bruta: NÃO utiliza recursão,
+      NÃO navega por árvore de busca no grafo e NÃO realiza backtracking.
+    - O algoritmo gera cegamente todas as permutações possíveis de estações intermediárias
+      usando itertools.permutations no vácuo, sem consultar arestas durante a geração.
+    - Para cada permutação candidata gerada, o algoritmo executa um teste direto (Generate-and-Test):
+      valida se todas as arestas consecutivas existem no grafo (inicio -> p[0] -> p[1] ... -> inicio).
+    - Para maximizar a eficiência sem perder a pureza da Força Bruta, testa os tamanhos
+      em ordem decrescente (do maior número possível de intermediários até 2).
+      O primeiro ciclo válido encontrado no maior tamanho já é garantidamente ótimo!
+    - Complexidade: Fatorial O(|V|!) no espaço de permutações avaliadas.
     """
     inicio_tempo = time.perf_counter()
     
+    # Dicionário de adjacências como conjuntos para consulta instantânea O(1)
+    adj_set = {u: set(grafo.vizinhos(u)) for u in grafo.obter_todos_os_vertices()}
+    
+    # Nós candidatos a intermediários: estações com grau >= 2 (grau <= 1 nunca forma ciclo)
+    candidatos = [v for v in grafo.obter_todos_os_vertices() if v != inicio and grafo.grau(v) >= 2]
+    
     melhor_ciclo = []
-    nos_expandidos = 0
-
-    def dfs(vertice_atual, caminho, visitados):
-        nonlocal melhor_ciclo, nos_expandidos
-        nos_expandidos += 1
-
-        for vizinho in grafo.vizinhos(vertice_atual):
-            # Se encontramos a estação inicial de volta e o ciclo tem ao menos 3 nós distintos
-            if vizinho == inicio and len(caminho) >= 3:
-                # O ciclo fecha voltando ao início
-                ciclo_candidato = caminho + [inicio]
-                if len(ciclo_candidato) > len(melhor_ciclo):
-                    melhor_ciclo = list(ciclo_candidato)
-            elif vizinho not in visitados:
-                # Passo de avanço recursivo
-                visitados.add(vizinho)
-                caminho.append(vizinho)
-                dfs(vizinho, caminho, visitados)
-                # Passo de backtracking (desfaz a escolha para testar outros caminhos)
-                caminho.pop()
-                visitados.remove(vizinho)
-
-    # Inicia a busca a partir de 'inicio'
-    dfs(inicio, [inicio], {inicio})
-
+    permutacoes_avaliadas = 0
+    
+    # Um ciclo simples requer no mínimo 2 intermediários (inicio -> v1 -> v2 -> inicio)
+    # Testamos os tamanhos m de intermediários do maior para o menor
+    for m in range(len(candidatos), 1, -1):
+        achou_neste_tamanho = False
+        
+        for perm in permutations(candidatos, m):
+            permutacoes_avaliadas += 1
+            
+            # Validação cega das conexões nos trilhos:
+            # 1. Checa a aresta de partida (inicio -> perm[0]) e de volta (perm[-1] -> inicio)
+            if perm[0] not in adj_set.get(inicio, set()) or perm[-1] not in adj_set.get(inicio, set()):
+                continue
+            
+            # 2. Checa todas as arestas intermediárias consecutivas
+            valido = True
+            for i in range(len(perm) - 1):
+                if perm[i + 1] not in adj_set.get(perm[i], set()):
+                    valido = False
+                    break
+            
+            # Se todas as arestas consecutivas existem, temos um ciclo simples válido!
+            if valido:
+                melhor_ciclo = [inicio] + list(perm) + [inicio]
+                achou_neste_tamanho = True
+                break  # Como m é decrescente, este ciclo já é de comprimento máximo!
+        
+        if achou_neste_tamanho:
+            break
+            
     tempo_total = (time.perf_counter() - inicio_tempo) * 1000.0  # milissegundos
-    return melhor_ciclo, tempo_total, nos_expandidos
+    return melhor_ciclo, tempo_total, permutacoes_avaliadas
 
 
 def branch_and_bound_maior_ciclo(grafo, inicio):
@@ -807,8 +824,21 @@ class InterfaceMetro(tk.Tk):
             tempo_ms = 0.0
 
             if metodo == "Força Bruta":
-                ciclo, tempo_ms, nos = forca_bruta_maior_ciclo(self.grafo, origem)
-                self.lbl_detalhes_busca.config(text=f"Nós explorados: {nos:,}")
+                candidatos_qtd = sum(1 for v in self.grafo.obter_todos_os_vertices() if v != origem and self.grafo.grau(v) >= 2)
+                if candidatos_qtd > 10:
+                    aviso = messagebox.askyesno(
+                        "Força Bruta Pura (Sem Backtracking)",
+                        f"Atenção: A Força Bruta Pura irá testar permutações cegas de {candidatos_qtd} estações (dezenas de milhões de permutações).\n\n"
+                        "Isso pode levar de alguns segundos a vários minutos.\n\n"
+                        "Deseja continuar mesmo assim?\n"
+                        "(Dica: O Branch-and-Bound resolve a mesma instância ótima em milissegundos!)"
+                    )
+                    if not aviso:
+                        self.lbl_status.config(text="Execução cancelada pelo usuário.")
+                        return
+
+                ciclo, tempo_ms, permutacoes = forca_bruta_maior_ciclo(self.grafo, origem)
+                self.lbl_detalhes_busca.config(text=f"Permutações avaliadas: {permutacoes:,}")
             elif metodo == "Branch-and-Bound":
                 ciclo, tempo_ms, nos, podas = branch_and_bound_maior_ciclo(self.grafo, origem)
                 self.lbl_detalhes_busca.config(text=f"Nós: {nos:,} | Podas efetuadas: {podas:,}")

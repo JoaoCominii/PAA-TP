@@ -70,15 +70,14 @@ A interface gráfica é a "vitrine" do trabalho e serve de base para os 3 integr
 
 ---
 
-### 4.2. Algoritmo 1: Força Bruta (DFS Exaustivo)
-* **Conceito:** Exploração completa do espaço de estados através de uma busca em profundidade com backtracking.
+### 4.2. Algoritmo 1: Força Bruta Pura (Generate-and-Test / Permutações Sem Backtracking)
+* **Conceito:** Implementação canônica e estrita de Força Bruta: **sem recursão, sem árvore de busca e sem backtracking**.
 * **Mecanismo:**
-  1. Inicia em $s$ com `caminho = [s]` e `visitados = {s}`.
-  2. Para cada vizinho $u$ do nó atual:
-     * Se $u == s$ e `len(caminho) >= 3`: encontrou um ciclo simples válido. Compara com o `melhor_ciclo` e atualiza se `len(caminho) > len(melhor_ciclo)`.
-     * Se $u \notin visitados$: marca $u$ como visitado, adiciona ao caminho e chama recursivamente.
-     * Ao desempilhar, desmarca $u$ (backtracking).
-* **Complexidade:** $O(|V|!)$ no pior caso.
+  1. Identifica os vértices candidatos a intermediários ($V \setminus \{s\}$) com grau $\ge 2$.
+  2. Gera exaustivamente todas as permutações de tamanho $m$ (de $|candidatos|$ descendo até 2) através de análise combinatória pura (`itertools.permutations`).
+  3. Para cada permutação candidata $s \to p_1 \to p_2 \dots \to p_m \to s$, submete a uma checagem direta (Generate-and-Test) validando se todas as arestas consecutivas existem no grafo.
+  4. O primeiro ciclo simples válido encontrado no maior $m$ já garante o tamanho ótimo global.
+* **Complexidade:** $O(|V|!)$ no espaço de permutações avaliadas.
 
 ---
 
@@ -154,7 +153,7 @@ flowchart TD
 2. **Passo 2:** Criar a janela base `tkinter.Tk`, com um `Canvas` responsivo capaz de desenhar círculos, texto e linhas.
 3. **Passo 3:** Adicionar lógica de normalização das coordenadas $(x, y)$ para que o mapa caiba perfeitamente no Canvas com margem agradável.
 4. **Passo 4:** Criar a barra de ferramentas com botões para alternar algoritmos, dropdown para escolher estação de origem e labels para exibir os resultados.
-5. **Passo 5:** Implementar o DFS exaustivo com backtracking para o Maior Ciclo.
+5. **Passo 5:** Implementar a Força Bruta Pura (Generate-and-Test / permutações sem backtracking) para o Maior Ciclo.
 6. **Passo 6:** Implementar a lógica de B&B com poda de alcance e poda de corte de tamanho.
 7. **Passo 7:** Implementar a Heurística gulosa polinomial.
 8. **Passo 8:** Implementar a função de desenho que "ilumina" o ciclo na tela e anima a rota.
@@ -227,46 +226,58 @@ Dado um vértice de partida e retorno $s \in V$, o objetivo consiste em encontra
 
 ---
 
-### 2.2. Abordagem 1: Força Bruta (DFS Exaustivo com Backtracking)
+### 2.2. Abordagem 1: Força Bruta Pura (Generate-and-Test / Permutações Sem Backtracking)
 
-A abordagem por força bruta realiza uma enumeração exaustiva do espaço de estados utilizando uma busca em profundidade (DFS) com retrocesso (*backtracking*).
+A abordagem por força bruta implementada segue a definição estrita e canônica do paradigma: **não utiliza recursão, não constrói árvore de busca e não realiza backtracking**. 
+
+O algoritmo gera sistematicamente permutações cegas de estações intermediárias candidatas no vácuo (usando análise combinatória) e aplica um filtro verificador (*Generate-and-Test*) que valida se todas as arestas consecutivas existem fisicamente no mapa do metrô.
+
+Para maximizar a eficiência exaustiva, o algoritmo avalia os comprimentos $m$ em ordem decrescente (do maior número possível de intermediários até 2). O primeiro ciclo válido encontrado garante a obtenção do comprimento máximo ótimo global.
 
 #### Pseudocódigo Formal:
 ```text
-Algoritmo: ForcaBrutaMaiorCiclo(G, s)
+Algoritmo: ForcaBrutaPuraMaiorCiclo(G, s)
 Entrada: Grafo G = (V, E), Estação inicial s
-Saída: Melhor ciclo C* e seu tamanho
+Saída: Maior ciclo simples C* e total de permutações testadas
 
 1.  C* ← ∅
-2.  caminho ← [s]
-3.  visitados ← {s}
-4.  
-5.  Procedimento DFS(u):
-6.      Para cada v ∈ Vizinhos(G, u) faça:
-7.          Se v = s E |caminho| ≥ 3 então:
-8.              candidato ← caminho + [s]
-9.              Se |candidato| > |C*| então:
-10.                 C* ← candidato
-11.         Senão se v ∉ visitados então:
-12.             visitados ← visitados ∪ {v}
-13.             caminho.anexar(v)
-14.             DFS(v)
-15.             caminho.remover_ultimo()   // Backtracking
-16.             visitados ← visitados \ {v}
-17.
-18. DFS(s)
-19. Retornar C*
+2.  candidatos ← {v ∈ V \ {s} : Grau(v) ≥ 2}
+3.  
+4.  // Testa os comprimentos de intermediários m do maior para o menor
+5.  Para m de |candidatos| decrescendo até 2 faça:
+6.      achou_neste_tamanho ← Falso
+7.      
+8.      Para cada permutação p = (p[1], p[2], ..., p[m]) de candidatos faça:
+9.          // Teste direto cego das arestas da permutação no grafo
+10.         Se (s, p[1]) ∉ E OU (p[m], s) ∉ E então:
+11.             Próxima permutação
+12.             
+13.         valido ← Verdadeiro
+14.         Para i de 1 até m - 1 faça:
+15.             Se (p[i], p[i+1]) ∉ E então:
+16.                 valido ← Falso
+17.                 Interromper laço
+18.                 
+19.         Se valido = Verdadeiro então:
+20.             C* ← [s, p[1], p[2], ..., p[m], s]
+21.             achou_neste_tamanho ← Verdadeiro
+22.             Interromper laço // Primeiro ciclo ótimo deste comprimento m
+23.             
+24.     Se achou_neste_tamanho = Verdadeiro então:
+25.         Interromper laço // Nenhum comprimento menor pode superar m
+26.
+27. Retornar C*
 ```
 
 #### Análise de Complexidade:
-* **Tempo no Pior Caso:** $O(|V|!)$. A cada nível da árvore de busca, o número de ramificações é limitado pelo grau residual dos vértices, gerando no pior caso (grafo completo $K_n$) uma árvore de permutação fatorial.
-* **Memória:** $O(|V|)$, necessária apenas para armazenar a pilha de recursão e o conjunto de visitados.
+* **Tempo no Pior Caso:** $O(|V|!)$. O número de permutações geradas cresce fatorialmente com o número de vértices candidatos, ilustrando perfeitamente a explosão combinatória da força bruta cega em problemas NP-Difíceis.
+* **Memória:** $O(|V|)$, necessária apenas para manter a tupla da permutação sendo avaliada no momento.
 
 ---
 
 ### 2.3. Abordagem 2: Branch-and-Bound (Poda por Limitante Superior e Retorno)
 
-O algoritmo de *Branch-and-Bound* explora a árvore de soluções garantindo a exatidão e otimalidade global, porém descartando previamente subárvores que comprovadamente não contêm soluções melhores que o recorde atual.
+Diferente da força bruta que gera permutações no vácuo, o algoritmo de *Branch-and-Bound* navega na árvore de caminhos reais do grafo, garantindo a mesma solução ótima da força bruta, mas eliminando (podando) subárvores que comprovadamente não conseguem superar o melhor ciclo já encontrado.
 
 #### Regras de Poda e Otimizações:
 1. **Poda por Limitante Superior (*Upper Bound*):**  
@@ -374,8 +385,8 @@ Saída: Ciclo aproximado C
 
 | Pergunta Típica do Professor | Resposta Esperada na Ponta da Língua |
 |---|---|
+| **Como a sua Força Bruta foi implementada?** | Foi implementada como **Força Bruta Pura (Generate-and-Test)**, sem usar recursão e sem backtracking. Ela gera permutações de estações intermediárias usando `itertools.permutations` e testa cegamente se todas as arestas consecutivas existem no grafo. |
+| **Qual é a diferença entre a Força Bruta e o Branch-and-Bound?** | A Força Bruta gera permutações cegas e testa se formam um ciclo. O Branch-and-Bound navega na árvore de caminhos reais do grafo e utiliza podas inteligentes por limitante superior (*Upper Bound*) e viabilidade de retorno, descartando milhões de subárvores improdutivas e chegando no mesmo resultado ótimo em uma fração do tempo. |
 | **Por que o ciclo precisa de pelo menos 3 nós distintos mais a volta?** | Em grafos não-direcionados, ir de $A$ para $B$ e voltar pela mesma aresta para $A$ ($A \to B \to A$) não é um ciclo simples, pois reutiliza a mesma aresta de ida. Um ciclo simples exige comprimento $\ge 3$ ($A \to B \to C \to A$). |
-| **Qual é a diferença de desempenho observada entre FB e B&B?** | Ambos chegam **exatamente ao mesmo tamanho de ciclo ótimo**, mas o B&B elimina subárvores inteiras através do limitante superior e da checagem de retorno. Nos testes preliminares, a FB expandiu 238 nós enquanto o B&B expandiu apenas 97 nós com 63 podas. |
 | **Por que o B&B utiliza ordenação por grau decrescente?** | É uma heurística de ramificação (*branching*): ao visitar primeiro nós com muitas conexões, o algoritmo encontra ciclos longos logo no começo da busca. Isso sobe rapidamente o valor de corte $|C^*|$, fazendo com que a condição de poda seja ativada em ramos subsequentes muito mais cedo. |
 | **A heurística sempre acha o ótimo?** | Não, heurísticas gulosas polinomiais não garantem o ótimo para problemas NP-Difíceis, mas encontram soluções de alta qualidade em tempo polinomial $O(|V| \cdot (|V|+|E|))$ sem risco de explosão combinatória. |
-
