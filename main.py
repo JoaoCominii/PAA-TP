@@ -1077,7 +1077,8 @@ class InterfaceMetro(tk.Tk):
         # cada período com sua cor correspondente, para que o usuário entenda o mapa.
         if self.coloracao_destacada:
             ids_unicos = sorted(set(self.coloracao_destacada.values()))
-            x_leg, y_leg = 15, largura_canvas - 20 - len(ids_unicos) * 22
+            x_leg = 15
+            y_leg = altura_canvas - 20 - len(ids_unicos) * 22
             self.canvas.create_rectangle(
                 x_leg - 5, y_leg - 8,
                 x_leg + 155, y_leg + len(ids_unicos) * 22 + 4,
