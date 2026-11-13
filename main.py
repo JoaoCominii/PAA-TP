@@ -16,8 +16,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import time
 import math
+import sys
 from collections import deque
-from itertools import permutations
+from dataclasses import dataclass
+from itertools import permutations, product
 
 
 # ======================================================================================
@@ -477,16 +479,247 @@ def resolver_problema_b(grafo, metodo):
     return [], tempo_total, "A ser integrado pelo Integrante 2"
 
 
+LIMITE_DE_TEMPO_GUI_SEGUNDOS = 30.0
+
+
+@dataclass
+class ResultadoColoracao:
+    cor_por_estacao: dict[str, int]
+    quantidade_de_cores: int
+    nos_explorados: int
+    tempo_segundos: float
+    interrompido_por_tempo: bool
+
+
+def coloracao_eh_valida(adjacencia: dict[str, set[str]], cor_por_estacao: dict[str, int]) -> bool:
+    for estacao in adjacencia:
+        if estacao not in cor_por_estacao:
+            return False
+    for estacao, vizinhos in adjacencia.items():
+        for vizinho in vizinhos:
+            if cor_por_estacao[estacao] == cor_por_estacao.get(vizinho):
+                return False
+    return True
+
+
+def tempo_esgotado(inicio: float, limite_de_tempo_segundos: float | None) -> bool:
+    return limite_de_tempo_segundos is not None and time.perf_counter() - inicio >= limite_de_tempo_segundos
+
+
+def colorir_cada_estacao_com_cor_distinta(adjacencia: dict[str, set[str]]) -> dict[str, int]:
+    return {estacao: indice for indice, estacao in enumerate(adjacencia)}
+
+
+def tamanho_de_clique_gulosa(adjacencia: dict[str, set[str]]) -> int:
+    vertices_por_grau_decrescente = sorted(adjacencia, key=lambda estacao: -len(adjacencia[estacao]))
+    clique: list[str] = []
+    for estacao in vertices_por_grau_decrescente:
+        if all(membro in adjacencia[estacao] for membro in clique):
+            clique.append(estacao)
+    return len(clique)
+
+
+def colorir_por_welsh_powell(adjacencia: dict[str, set[str]]) -> ResultadoColoracao:
+    inicio = time.perf_counter()
+    vertices_por_grau_decrescente = sorted(adjacencia, key=lambda estacao: -len(adjacencia[estacao]))
+    cor_por_estacao: dict[str, int] = {}
+    tentativas_de_colorir = 0
+    cor_atual = 0
+    while len(cor_por_estacao) < len(vertices_por_grau_decrescente):
+        estacoes_com_cor_atual: set[str] = set()
+        for estacao in vertices_por_grau_decrescente:
+            if estacao in cor_por_estacao:
+                continue
+            tentativas_de_colorir += 1
+            if adjacencia[estacao].isdisjoint(estacoes_com_cor_atual):
+                cor_por_estacao[estacao] = cor_atual
+                estacoes_com_cor_atual.add(estacao)
+        cor_atual += 1
+    return ResultadoColoracao(
+        cor_por_estacao=cor_por_estacao,
+        quantidade_de_cores=cor_atual,
+        nos_explorados=tentativas_de_colorir,
+        tempo_segundos=time.perf_counter() - inicio,
+        interrompido_por_tempo=False,
+    )
+
+
+def colorir_por_forca_bruta(
+    adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
+) -> ResultadoColoracao:
+    inicio = time.perf_counter()
+    estacoes = list(adjacencia)
+    quantidade_de_estacoes = len(estacoes)
+    atribuicoes_testadas = 0
+    for quantidade_de_cores in range(1, quantidade_de_estacoes + 1):
+        for atribuicao_de_cores in product(range(quantidade_de_cores), repeat=quantidade_de_estacoes):
+            if tempo_esgotado(inicio, limite_de_tempo_segundos):
+                return ResultadoColoracao(
+                    cor_por_estacao=colorir_cada_estacao_com_cor_distinta(adjacencia),
+                    quantidade_de_cores=quantidade_de_estacoes,
+                    nos_explorados=atribuicoes_testadas,
+                    tempo_segundos=time.perf_counter() - inicio,
+                    interrompido_por_tempo=True,
+                )
+            atribuicoes_testadas += 1
+            cor_por_estacao = dict(zip(estacoes, atribuicao_de_cores))
+            if coloracao_eh_valida(adjacencia, cor_por_estacao):
+                return ResultadoColoracao(
+                    cor_por_estacao=cor_por_estacao,
+                    quantidade_de_cores=quantidade_de_cores,
+                    nos_explorados=atribuicoes_testadas,
+                    tempo_segundos=time.perf_counter() - inicio,
+                    interrompido_por_tempo=False,
+                )
+    return ResultadoColoracao(
+        cor_por_estacao={},
+        quantidade_de_cores=0,
+        nos_explorados=atribuicoes_testadas,
+        tempo_segundos=time.perf_counter() - inicio,
+        interrompido_por_tempo=False,
+    )
+
+
+def colorir_por_branch_and_bound(
+    adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
+) -> ResultadoColoracao:
+    inicio = time.perf_counter()
+    estacoes = list(adjacencia)
+    quantidade_de_estacoes = len(estacoes)
+    resultado_da_heuristica = colorir_por_welsh_powell(adjacencia)
+    estado = {
+        "melhor_coloracao": dict(resultado_da_heuristica.cor_por_estacao),
+        "melhor_quantidade_de_cores": resultado_da_heuristica.quantidade_de_cores,
+        "nos_explorados": 0,
+        "interrompido_por_tempo": False,
+        "otimo_provado": False,
+    }
+    limite_inferior = tamanho_de_clique_gulosa(adjacencia)
+    if estado["melhor_quantidade_de_cores"] <= limite_inferior:
+        estado["otimo_provado"] = True
+
+    cor_por_estacao: dict[str, int] = {}
+    quantidade_de_vizinhos_por_cor: dict[str, dict[int, int]] = {estacao: {} for estacao in estacoes}
+
+    def pintar_estacao(estacao: str, cor: int) -> None:
+        cor_por_estacao[estacao] = cor
+        for vizinho in adjacencia[estacao]:
+            contagem_do_vizinho = quantidade_de_vizinhos_por_cor[vizinho]
+            contagem_do_vizinho[cor] = contagem_do_vizinho.get(cor, 0) + 1
+
+    def despintar_estacao(estacao: str) -> None:
+        cor = cor_por_estacao.pop(estacao)
+        for vizinho in adjacencia[estacao]:
+            contagem_do_vizinho = quantidade_de_vizinhos_por_cor[vizinho]
+            contagem_do_vizinho[cor] -= 1
+            if contagem_do_vizinho[cor] == 0:
+                del contagem_do_vizinho[cor]
+
+    def escolher_estacao_com_maior_saturacao() -> str:
+        return max(
+            (estacao for estacao in estacoes if estacao not in cor_por_estacao),
+            key=lambda estacao: (len(quantidade_de_vizinhos_por_cor[estacao]), len(adjacencia[estacao])),
+        )
+
+    def busca_deve_parar() -> bool:
+        if estado["otimo_provado"] or estado["interrompido_por_tempo"]:
+            return True
+        if tempo_esgotado(inicio, limite_de_tempo_segundos):
+            estado["interrompido_por_tempo"] = True
+            return True
+        return False
+
+    def ramificar(cores_usadas_no_ramo: int) -> None:
+        if busca_deve_parar():
+            return
+        estado["nos_explorados"] += 1
+        if cores_usadas_no_ramo >= estado["melhor_quantidade_de_cores"]:
+            return
+        if len(cor_por_estacao) == quantidade_de_estacoes:
+            estado["melhor_coloracao"] = dict(cor_por_estacao)
+            estado["melhor_quantidade_de_cores"] = cores_usadas_no_ramo
+            if cores_usadas_no_ramo <= limite_inferior:
+                estado["otimo_provado"] = True
+            return
+        estacao_escolhida = escolher_estacao_com_maior_saturacao()
+        cores_proibidas = quantidade_de_vizinhos_por_cor[estacao_escolhida]
+        for cor_ja_usada in range(cores_usadas_no_ramo):
+            if cor_ja_usada in cores_proibidas:
+                continue
+            pintar_estacao(estacao_escolhida, cor_ja_usada)
+            ramificar(cores_usadas_no_ramo)
+            despintar_estacao(estacao_escolhida)
+            if busca_deve_parar():
+                return
+        if cores_usadas_no_ramo + 1 < estado["melhor_quantidade_de_cores"]:
+            pintar_estacao(estacao_escolhida, cores_usadas_no_ramo)
+            ramificar(cores_usadas_no_ramo + 1)
+            despintar_estacao(estacao_escolhida)
+
+    limite_de_recursao_original = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limite_de_recursao_original, 2 * quantidade_de_estacoes + 100))
+    try:
+        ramificar(0)
+    finally:
+        sys.setrecursionlimit(limite_de_recursao_original)
+
+    return ResultadoColoracao(
+        cor_por_estacao=estado["melhor_coloracao"],
+        quantidade_de_cores=estado["melhor_quantidade_de_cores"],
+        nos_explorados=estado["nos_explorados"],
+        tempo_segundos=time.perf_counter() - inicio,
+        interrompido_por_tempo=estado["interrompido_por_tempo"],
+    )
+
+
+def extrair_adjacencia_simples(grafo: GrafoMetro) -> dict[str, set[str]]:
+    return {
+        estacao: {
+            vizinho
+            for vizinho in grafo.adjacencias.get(estacao, {})
+            if vizinho in grafo.estacoes and vizinho != estacao
+        }
+        for estacao in grafo.estacoes
+    }
+
+
+def montar_mensagem_da_coloracao(resultado: ResultadoColoracao) -> str:
+    estacoes_por_periodo: dict[int, list[str]] = {}
+    for estacao, cor in resultado.cor_por_estacao.items():
+        estacoes_por_periodo.setdefault(cor, []).append(estacao)
+    linhas_da_mensagem = [
+        f"Períodos de manutenção (cores): {resultado.quantidade_de_cores}",
+        f"Nós explorados: {resultado.nos_explorados:,}",
+    ]
+    if resultado.interrompido_por_tempo:
+        linhas_da_mensagem.append(
+            f"AVISO: limite de {LIMITE_DE_TEMPO_GUI_SEGUNDOS:.0f} s atingido; "
+            "esta é a melhor solução encontrada, sem garantia de ótimo."
+        )
+    linhas_da_mensagem.append("")
+    for cor in sorted(estacoes_por_periodo):
+        linhas_da_mensagem.append(f"Período {cor + 1}: {', '.join(sorted(estacoes_por_periodo[cor]))}")
+    return "\n".join(linhas_da_mensagem)
+
+
 def resolver_problema_c(grafo, metodo):
     """
     PROBLEMA (C) - COLORAÇÃO DE VÉRTICES (PERÍODOS DE MANUTENÇÃO)
     Responsável: Integrante 3
     Métodos: 'forca_bruta', 'branch_and_bound', 'heuristica'
     """
-    inicio_tempo = time.perf_counter()
+    adjacencia = extrair_adjacencia_simples(grafo)
     # Placeholder demonstrativo:
-    tempo_total = (time.perf_counter() - inicio_tempo) * 1000.0
-    return {}, tempo_total, "A ser integrado pelo Integrante 3"
+    if metodo in ("Força Bruta", "forca_bruta"):
+        resultado = colorir_por_forca_bruta(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
+    elif metodo in ("Branch-and-Bound", "branch_and_bound"):
+        resultado = colorir_por_branch_and_bound(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
+    elif metodo in ("Heurística", "heuristica"):
+        resultado = colorir_por_welsh_powell(adjacencia)
+    else:
+        return {}, 0.0, f"Método desconhecido: {metodo}"
+    tempo_ms = resultado.tempo_segundos * 1000.0
+    return resultado.cor_por_estacao, tempo_ms, montar_mensagem_da_coloracao(resultado)
 
 
 # ======================================================================================
