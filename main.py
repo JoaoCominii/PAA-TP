@@ -709,12 +709,13 @@ def resolver_problema_c(grafo, metodo):
     Métodos: 'forca_bruta', 'branch_and_bound', 'heuristica'
     """
     adjacencia = extrair_adjacencia_simples(grafo)
-    # Placeholder demonstrativo:
-    if metodo in ("Força Bruta", "forca_bruta"):
+    # Normaliza o nome do método para ser robusto a acentos e variações de string
+    metodo_norm = metodo.lower().replace("ç", "c").replace("á", "a").replace("é", "e").replace("ó", "o").replace("í", "i").replace("ú", "u")
+    if "bruta" in metodo_norm or metodo_norm == "forca_bruta":
         resultado = colorir_por_forca_bruta(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
-    elif metodo in ("Branch-and-Bound", "branch_and_bound"):
+    elif "bound" in metodo_norm or metodo_norm == "branch_and_bound":
         resultado = colorir_por_branch_and_bound(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
-    elif metodo in ("Heurística", "heuristica"):
+    elif "heur" in metodo_norm:
         resultado = colorir_por_welsh_powell(adjacencia)
     else:
         return {}, 0.0, f"Método desconhecido: {metodo}"
@@ -745,8 +746,35 @@ class InterfaceMetro(tk.Tk):
 
         # Dados do sistema
         self.grafo = GrafoMetro()
-        self.ciclo_destacado = []
-        self.estacao_selecionada = None
+        self.ciclo_destacado = []       # Problema (a): lista de estações do ciclo encontrado
+        self.estacao_selecionada = None # Problema (a): estação de partida selecionada
+        self.coloracao_destacada = {}   # Problema (c): dicionário { nome_estacao: id_periodo (int) }
+
+        # Paleta de cores visuais para os períodos de manutenção (Problema c).
+        # Cada índice de período (0, 1, 2, ...) recebe uma cor distinta e legível no Canvas escuro.
+        # Adicionamos 20 cores para suportar grafos com número cromático alto.
+        self.paleta_periodos = [
+            "#E74C3C",  # 0 - Vermelho
+            "#3498DB",  # 1 - Azul
+            "#2ECC71",  # 2 - Verde
+            "#F39C12",  # 3 - Laranja
+            "#9B59B6",  # 4 - Roxo
+            "#1ABC9C",  # 5 - Turquesa
+            "#F1C40F",  # 6 - Amarelo
+            "#E67E22",  # 7 - Laranja escuro
+            "#EC407A",  # 8 - Rosa
+            "#00BCD4",  # 9 - Ciano
+            "#8BC34A",  # 10 - Verde limão
+            "#FF7043",  # 11 - Coral
+            "#7E57C2",  # 12 - Lilás
+            "#26C6DA",  # 13 - Azul claro
+            "#D4E157",  # 14 - Verde amarelado
+            "#FF8A65",  # 15 - Salmão
+            "#AB47BC",  # 16 - Violeta
+            "#29B6F6",  # 17 - Azul céu
+            "#66BB6A",  # 18 - Verde médio
+            "#FFA726",  # 19 - Âmbar
+        ]
 
         # Configuração de Layout
         self._criar_componentes()
@@ -988,17 +1016,36 @@ class InterfaceMetro(tk.Tk):
         for nome, (x, y) in estacoes.items():
             cx, cy = para_canvas(x, y)
 
-            # Define cor de preenchimento do vértice
-            if nome == self.estacao_selecionada:
-                cor_fundo = "#00FFFF"  # Ciano para estação de partida
+            # Define cor e raio do vértice de acordo com o estado atual da interface:
+            # - Problema (a) ativo: estação de partida fica ciano, estações do ciclo ficam douradas.
+            # - Problema (c) ativo: cada estação recebe a cor do período de manutenção calculado.
+            # - Estado padrão (sem resultado): círculo branco.
+            if self.coloracao_destacada:
+                # Problema (c): pinta o círculo com a cor do período de manutenção
+                id_periodo = self.coloracao_destacada.get(nome, -1)
+                if id_periodo >= 0:
+                    idx_paleta = id_periodo % len(self.paleta_periodos)
+                    cor_fundo = self.paleta_periodos[idx_paleta]
+                    borda = "#FFFFFF"
+                else:
+                    # Estação sem período atribuído (não deveria ocorrer numa solução válida)
+                    cor_fundo = "#888888"
+                    borda = "#FFFFFF"
+                r = raio + 2  # Ligeiramente maior para destacar bem a cor
+
+            elif nome == self.estacao_selecionada:
+                # Problema (a): estação de partida selecionada pelo usuário
+                cor_fundo = "#00FFFF"  # Ciano
                 borda = "#FFFFFF"
                 r = raio + 3
             elif nome in self.ciclo_destacado:
-                cor_fundo = "#FFD700"  # Ouro para estações do ciclo
+                # Problema (a): estação que faz parte do ciclo encontrado
+                cor_fundo = "#FFD700"  # Ouro
                 borda = "#000000"
                 r = raio + 2
             else:
-                cor_fundo = "#FFFFFF"  # Branco padrão
+                # Estado padrão sem nenhum resultado ativo
+                cor_fundo = "#FFFFFF"
                 borda = "#333333"
                 r = raio
 
@@ -1024,6 +1071,32 @@ class InterfaceMetro(tk.Tk):
                         cx, cy - 14, text=f"#{idx}", fill="#FFD700",
                         font=("Segoe UI", 9, "bold")
                     )
+
+        # 6. Desenha a legenda de períodos de manutenção (Problema c)
+        # Exibe uma caixinha no canto inferior esquerdo do Canvas mostrando
+        # cada período com sua cor correspondente, para que o usuário entenda o mapa.
+        if self.coloracao_destacada:
+            ids_unicos = sorted(set(self.coloracao_destacada.values()))
+            x_leg, y_leg = 15, largura_canvas - 20 - len(ids_unicos) * 22
+            self.canvas.create_rectangle(
+                x_leg - 5, y_leg - 8,
+                x_leg + 155, y_leg + len(ids_unicos) * 22 + 4,
+                fill="#222222", outline="#555555"
+            )
+            self.canvas.create_text(
+                x_leg + 75, y_leg - 2, text="Períodos de Manutenção",
+                fill="#FFFFFF", font=("Segoe UI", 8, "bold"), anchor=tk.N
+            )
+            for i, id_periodo in enumerate(ids_unicos):
+                cor = self.paleta_periodos[id_periodo % len(self.paleta_periodos)]
+                yy = y_leg + 18 + i * 22
+                # Quadrado colorido
+                self.canvas.create_rectangle(x_leg, yy - 8, x_leg + 16, yy + 8, fill=cor, outline="#FFFFFF")
+                # Rótulo do período
+                self.canvas.create_text(
+                    x_leg + 22, yy, text=f"Período {id_periodo + 1}",
+                    fill="#FFFFFF", font=("Segoe UI", 9), anchor=tk.W
+                )
 
     def _ao_clicar_no_canvas(self, event):
         """
@@ -1157,16 +1230,37 @@ class InterfaceMetro(tk.Tk):
         # CASO 3: PROBLEMA (C) - COLORAÇÃO DE VÉRTICES (INTEGRANTE 3)
         # -------------------------------------------------------------
         elif "Problema (c)" in problema:
-            self.lbl_status.config(text="Executando Problema (c)...")
+            self.lbl_status.config(text="Executando Problema (c)... Aguarde.")
+            self.update_idletasks()
+
             res, tempo_ms, msg = resolver_problema_c(self.grafo, metodo)
+
+            # Guarda o dicionário { estacao: id_periodo } para o redesenho colorido do mapa
+            self.coloracao_destacada = res if res else {}
+            # Garante que o ciclo do Problema (a) seja apagado ao exibir o Problema (c)
+            self.ciclo_destacado = []
+
             self.lbl_tempo.config(text=f"Tempo: {tempo_ms:.3f} ms")
-            self.lbl_metrica.config(text="Cores: --")
+
+            if res:
+                num_cores = len(set(res.values()))
+                self.lbl_metrica.config(text=f"Número cromático χ(G) = {num_cores} período(s)")
+                self.lbl_status.config(text=f"Coloração calculada: {num_cores} períodos de manutenção.")
+            else:
+                self.lbl_metrica.config(text="Cores: Nenhuma solução encontrada")
+                self.lbl_status.config(text="Não foi possível calcular a coloração.")
+
+            self.lbl_detalhes_busca.config(text="Veja painel lateral para detalhes.")
             self.txt_resultado.delete("1.0", tk.END)
-            self.txt_resultado.insert(tk.END, f"Módulo do Integrante 3:\n{msg}")
+            self.txt_resultado.insert(tk.END, msg)
+
+            # Redesenha o mapa com as estações coloridas por período
+            self.redesenhar_mapa()
 
     def _acao_limpar_destaques(self):
-        """Limpa as marcações visuais e campos de texto."""
-        self.ciclo_destacado = []
+        """Limpa as marcações visuais e campos de texto de todos os problemas."""
+        self.ciclo_destacado = []       # Limpa o ciclo do Problema (a)
+        self.coloracao_destacada = {}   # Limpa a coloração do Problema (c)
         self.lbl_tempo.config(text="Tempo: -- ms")
         self.lbl_metrica.config(text="Métrica: --")
         self.lbl_detalhes_busca.config(text="Nós / Podas: --")
