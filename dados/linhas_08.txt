@@ -1,0 +1,72 @@
+Linha1 #FFCD00 7
+La Défense Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Franklin D. Roosevelt
+Franklin D. Roosevelt Concorde
+Concorde Châtelet
+Châtelet Bastille
+Bastille Nation
+Nation Château de Vincennes
+Linha2 #003CA6 6
+Porte Dauphine Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Pigalle
+Pigalle Barbès-Rochechouart
+Barbès-Rochechouart Stalingrad
+Stalingrad Jaurès
+Jaurès Nation
+Linha4 #CF009E 11
+Porte de Clignancourt Marcadet-Poissonniers
+Marcadet-Poissonniers Barbès-Rochechouart
+Barbès-Rochechouart Gare du Nord
+Gare du Nord Gare de l'Est
+Gare de l'Est Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis Châtelet
+Châtelet Odéon
+Odéon Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Porte d'Orléans
+Linha5 #FF7E2E 9
+Bobigny-Pablo Picasso Jaurès
+Jaurès Stalingrad
+Stalingrad Gare du Nord
+Gare du Nord Gare de l'Est
+Gare de l'Est République
+République Oberkampf
+Oberkampf Bastille
+Bastille Gare d'Austerlitz
+Gare d'Austerlitz Place d'Italie
+Linha6 #6ECA97 8
+Charles de Gaulle-Étoile Trocadéro
+Trocadéro La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Pasteur
+Pasteur Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Place d'Italie
+Place d'Italie Nation
+Linha9 #B6BD00 9
+Pont de Sèvres Michel-Ange-Molitor
+Michel-Ange-Molitor Michel-Ange-Auteuil
+Michel-Ange-Auteuil Trocadéro
+Trocadéro Franklin D. Roosevelt
+Franklin D. Roosevelt Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis République
+République Oberkampf
+Oberkampf Nation
+Nation Mairie de Montreuil
+Linha10 #E3B32A 7
+Boulogne-Pont de Saint-Cloud Michel-Ange-Molitor
+Michel-Ange-Molitor La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Sèvres-Babylone
+Sèvres-Babylone Odéon
+Odéon Gare d'Austerlitz
+La Motte-Picquet-Grenelle Michel-Ange-Auteuil
+Michel-Ange-Auteuil Boulogne-Pont de Saint-Cloud
+Linha12 #00814F 7
+Porte de la Chapelle Marcadet-Poissonniers
+Marcadet-Poissonniers Pigalle
+Pigalle Concorde
+Concorde Sèvres-Babylone
+Sèvres-Babylone Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Pasteur
+Pasteur Mairie d'Issy

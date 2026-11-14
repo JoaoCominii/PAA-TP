@@ -1,0 +1,99 @@
+Linha1 #FFCD00 9
+La Défense Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Franklin D. Roosevelt
+Franklin D. Roosevelt Champs-Élysées-Clemenceau
+Champs-Élysées-Clemenceau Concorde
+Concorde Palais Royal-Musée du Louvre
+Palais Royal-Musée du Louvre Châtelet
+Châtelet Bastille
+Bastille Nation
+Nation Château de Vincennes
+Linha2 #003CA6 7
+Porte Dauphine Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Place de Clichy
+Place de Clichy Pigalle
+Pigalle Barbès-Rochechouart
+Barbès-Rochechouart Stalingrad
+Stalingrad Jaurès
+Jaurès Nation
+Linha4 #CF009E 11
+Porte de Clignancourt Marcadet-Poissonniers
+Marcadet-Poissonniers Barbès-Rochechouart
+Barbès-Rochechouart Gare du Nord
+Gare du Nord Gare de l'Est
+Gare de l'Est Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis Châtelet
+Châtelet Odéon
+Odéon Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Porte d'Orléans
+Linha5 #FF7E2E 9
+Bobigny-Pablo Picasso Jaurès
+Jaurès Stalingrad
+Stalingrad Gare du Nord
+Gare du Nord Gare de l'Est
+Gare de l'Est République
+République Oberkampf
+Oberkampf Bastille
+Bastille Gare d'Austerlitz
+Gare d'Austerlitz Place d'Italie
+Linha6 #6ECA97 8
+Charles de Gaulle-Étoile Trocadéro
+Trocadéro La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Pasteur
+Pasteur Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Place d'Italie
+Place d'Italie Nation
+Linha7 #FA9ABA 9
+La Courneuve-8 Mai 1945 Stalingrad
+Stalingrad Gare de l'Est
+Gare de l'Est Chaussée d'Antin-La Fayette
+Chaussée d'Antin-La Fayette Palais Royal-Musée du Louvre
+Palais Royal-Musée du Louvre Châtelet
+Châtelet Jussieu
+Jussieu Place d'Italie
+Place d'Italie Villejuif-Louis Aragon
+Place d'Italie Mairie d'Ivry
+Linha9 #B6BD00 11
+Pont de Sèvres Michel-Ange-Molitor
+Michel-Ange-Molitor Michel-Ange-Auteuil
+Michel-Ange-Auteuil Trocadéro
+Trocadéro Franklin D. Roosevelt
+Franklin D. Roosevelt Miromesnil
+Miromesnil Chaussée d'Antin-La Fayette
+Chaussée d'Antin-La Fayette Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis République
+République Oberkampf
+Oberkampf Nation
+Nation Mairie de Montreuil
+Linha10 #E3B32A 9
+Boulogne-Pont de Saint-Cloud Michel-Ange-Molitor
+Michel-Ange-Molitor La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Duroc
+Duroc Sèvres-Babylone
+Sèvres-Babylone Odéon
+Odéon Jussieu
+Jussieu Gare d'Austerlitz
+La Motte-Picquet-Grenelle Michel-Ange-Auteuil
+Michel-Ange-Auteuil Boulogne-Pont de Saint-Cloud
+Linha12 #00814F 8
+Porte de la Chapelle Marcadet-Poissonniers
+Marcadet-Poissonniers Pigalle
+Pigalle Saint-Lazare
+Saint-Lazare Concorde
+Concorde Sèvres-Babylone
+Sèvres-Babylone Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Pasteur
+Pasteur Mairie d'Issy
+Linha13 #98D4E2 8
+Châtillon-Montrouge Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Duroc
+Duroc Champs-Élysées-Clemenceau
+Champs-Élysées-Clemenceau Miromesnil
+Miromesnil Saint-Lazare
+Saint-Lazare Place de Clichy
+Place de Clichy Gabriel Péri
+Place de Clichy Saint-Denis-Université

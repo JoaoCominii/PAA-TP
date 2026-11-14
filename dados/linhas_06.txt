@@ -1,0 +1,41 @@
+Linha1 #FFCD00 5
+La Défense Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Franklin D. Roosevelt
+Franklin D. Roosevelt Châtelet
+Châtelet Nation
+Nation Château de Vincennes
+Linha2 #003CA6 3
+Porte Dauphine Charles de Gaulle-Étoile
+Charles de Gaulle-Étoile Barbès-Rochechouart
+Barbès-Rochechouart Nation
+Linha4 #CF009E 8
+Porte de Clignancourt Barbès-Rochechouart
+Barbès-Rochechouart Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis Châtelet
+Châtelet Odéon
+Odéon Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Porte d'Orléans
+Linha6 #6ECA97 6
+Charles de Gaulle-Étoile Trocadéro
+Trocadéro La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Montparnasse-Bienvenüe
+Montparnasse-Bienvenüe Raspail
+Raspail Denfert-Rochereau
+Denfert-Rochereau Nation
+Linha9 #B6BD00 7
+Pont de Sèvres Michel-Ange-Molitor
+Michel-Ange-Molitor Michel-Ange-Auteuil
+Michel-Ange-Auteuil Trocadéro
+Trocadéro Franklin D. Roosevelt
+Franklin D. Roosevelt Strasbourg-Saint-Denis
+Strasbourg-Saint-Denis Nation
+Nation Mairie de Montreuil
+Linha10 #E3B32A 6
+Boulogne-Pont de Saint-Cloud Michel-Ange-Molitor
+Michel-Ange-Molitor La Motte-Picquet-Grenelle
+La Motte-Picquet-Grenelle Odéon
+Odéon Gare d'Austerlitz
+La Motte-Picquet-Grenelle Michel-Ange-Auteuil
+Michel-Ange-Auteuil Boulogne-Pont de Saint-Cloud
