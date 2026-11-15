@@ -19,7 +19,7 @@ import math
 import sys
 from collections import deque
 from dataclasses import dataclass
-from itertools import permutations, product
+from itertools import combinations, permutations, product
 
 
 # ======================================================================================
@@ -82,6 +82,11 @@ class GrafoMetro:
         self.adjacencias.clear()
         self.trechos.clear()
 
+    def limpar_trechos(self):
+        """Remove todas as ligações, mantendo as estações e suas coordenadas."""
+        self.adjacencias = {nome: {} for nome in self.estacoes}
+        self.trechos.clear()
+
     def adicionar_estacao(self, nome, x, y):
         """Adiciona ou atualiza as coordenadas de uma estação no grafo."""
         self.estacoes[nome] = (float(x), float(y))
@@ -130,7 +135,7 @@ class GrafoMetro:
 # ======================================================================================
 # 3. PARSERS DE ARQUIVOS (CONFORME ESPECIFICAÇÃO DO EDITAL)
 # ======================================================================================
-def carregar_arquivo_estacoes(caminho_arquivo, grafo):
+def carregar_arquivo_estacoes(caminho_arquivo, grafo, avisos=None):
     """
     Lê o arquivo de estações no formato:
         NomeEstacao x y
@@ -138,31 +143,43 @@ def carregar_arquivo_estacoes(caminho_arquivo, grafo):
         Nation 100 150
         Republique 50 100
         Gare du Nord 510 150 (suporta nomes compostos com espaços ou underlines)
+
+    Um novo arquivo de estações substitui todo o grafo anterior (estações e linhas).
+    Se 'avisos' for uma lista, recebe a descrição das linhas ignoradas ou repetidas.
     """
+    if avisos is None:
+        avisos = []
+    grafo.limpar()
     total_lidas = 0
     with open(caminho_arquivo, "r", encoding="utf-8") as f:
-        for linha in f:
+        for numero_linha, linha in enumerate(f, start=1):
             linha = linha.strip()
             # Ignora linhas em branco ou comentários
             if not linha or linha.startswith("#"):
                 continue
-            
+
             # rsplit com maxsplit=2 garante que os dois últimos itens sejam as coordenadas x e y,
             # e todo o restante inicial seja tratado como o nome da estação (mesmo com espaços).
             partes = linha.rsplit(None, 2)
-            if len(partes) == 3:
-                nome = partes[0].strip()
-                try:
-                    x = float(partes[1])
-                    y = float(partes[2])
-                    grafo.adicionar_estacao(nome, x, y)
-                    total_lidas += 1
-                except ValueError:
-                    continue
+            if len(partes) != 3:
+                avisos.append(f"Linha {numero_linha} ignorada (esperado 'Nome x y'): {linha}")
+                continue
+            nome = partes[0].strip()
+            try:
+                x = float(partes[1])
+                y = float(partes[2])
+            except ValueError:
+                avisos.append(f"Linha {numero_linha} ignorada (coordenadas inválidas): {linha}")
+                continue
+            if nome in grafo.estacoes:
+                avisos.append(f"Linha {numero_linha}: estação '{nome}' repetida; mantida a última posição.")
+            else:
+                total_lidas += 1
+            grafo.adicionar_estacao(nome, x, y)
     return total_lidas
 
 
-def carregar_arquivo_linhas(caminho_arquivo, grafo):
+def carregar_arquivo_linhas(caminho_arquivo, grafo, avisos=None):
     """
     Lê o arquivo de linhas do metrô no formato dividido em seções:
         LinhaX cor N
@@ -172,64 +189,88 @@ def carregar_arquivo_linhas(caminho_arquivo, grafo):
         Linha1 azul 2
         Nation Republique
         Republique Chatelet
-        
+
     Robustez:
     - Suporta nomes compostos separados por espaço, tabulação ou casando com estações cadastradas.
+    Exige que o arquivo de estações já tenha sido carregado, pois é ele que permite separar
+    "Gare du Nord Gare de l'Est" nas duas estações corretas.
+    Um novo arquivo de linhas substitui as ligações anteriores, mantendo as estações.
+    Trechos com estações desconhecidas são ignorados e registrados em 'avisos' (se for uma lista),
+    assim como seções cuja quantidade de trechos não bate com o cabeçalho.
     """
+    if avisos is None:
+        avisos = []
+    if not grafo.estacoes:
+        raise ValueError("Carregue o arquivo de estações antes do arquivo de linhas.")
+    grafo.limpar_trechos()
     total_trechos = 0
     with open(caminho_arquivo, "r", encoding="utf-8") as f:
-        linhas = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+        linhas = [
+            (numero, l.strip())
+            for numero, l in enumerate(f, start=1)
+            if l.strip() and not l.strip().startswith("#")
+        ]
 
     estacoes_conhecidas = sorted(grafo.estacoes.keys(), key=lambda s: len(s), reverse=True)
 
+    def eh_cabecalho(texto):
+        # "LinhaX cor N": começa com 'Linha' e termina com a quantidade de trechos
+        partes = texto.split()
+        return len(partes) >= 3 and partes[0].lower().startswith("linha") and partes[-1].isdigit()
+
+    def separar_estacoes(texto_trecho):
+        # 1. Tentativa via delimitadores comuns (tabulação, ponto-e-vírgula ou hífen com espaços)
+        for delim in ["\t", ";", " - "]:
+            if delim in texto_trecho:
+                pedacos = texto_trecho.split(delim, 1)
+                return pedacos[0].strip(), pedacos[1].strip()
+        # 2. Casa o início do texto com uma estação cadastrada (nomes mais longos primeiro)
+        for est in estacoes_conhecidas:
+            if texto_trecho.startswith(est + " "):
+                resto = texto_trecho[len(est):].strip()
+                if resto in grafo.estacoes:
+                    return est, resto
+        # 3. Fallback: duas palavras simples
+        par = texto_trecho.split()
+        if len(par) == 2:
+            return par[0], par[1]
+        return None, None
+
+    total_trechos = 0
     i = 0
     while i < len(linhas):
-        cabecalho = linhas[i].split()
-        if len(cabecalho) >= 3:
-            nome_linha = cabecalho[0]
-            cor = cabecalho[1]
-            try:
-                qtd_trechos = int(cabecalho[2])
-            except ValueError:
-                qtd_trechos = 0
-
+        numero_cabecalho, texto = linhas[i]
+        i += 1
+        if not eh_cabecalho(texto):
+            avisos.append(f"Linha {numero_cabecalho} ignorada (fora de uma seção 'LinhaX cor N'): {texto}")
+            continue
+        cabecalho = texto.split()
+        nome_linha = cabecalho[0]
+        cor = " ".join(cabecalho[1:-1])
+        qtd_trechos = int(cabecalho[-1])
+        lidos = 0
+        while i < len(linhas) and not eh_cabecalho(linhas[i][1]):
+            numero_trecho, texto_trecho = linhas[i]
             i += 1
-            lidos = 0
-            while i < len(linhas) and lidos < qtd_trechos:
-                texto_trecho = linhas[i].strip()
-                u, v = None, None
-
-                # 1. Tentativa via delimitadores comuns (tabulação, ponto-e-vírgula ou hífen com espaços)
-                for delim in ["\t", ";", " - "]:
-                    if delim in texto_trecho:
-                        pedacos = texto_trecho.split(delim, 1)
-                        if len(pedacos) == 2:
-                            u, v = pedacos[0].strip(), pedacos[1].strip()
-                            break
-
-                # 2. Se não achou delimitador especial, tenta casar com as estações cadastradas
-                if not u and estacoes_conhecidas:
-                    for est in estacoes_conhecidas:
-                        if texto_trecho.startswith(est):
-                            resto = texto_trecho[len(est):].strip()
-                            if resto in grafo.estacoes:
-                                u, v = est, resto
-                                break
-
-                # 3. Fallback: split simples por espaços se forem duas palavras
-                if not u:
-                    par = texto_trecho.split()
-                    if len(par) >= 2:
-                        u, v = par[0], par[1]
-
-                if u and v:
-                    grafo.adicionar_trecho(u, v, nome_linha, cor)
-                    total_trechos += 1
-                    lidos += 1
-                i += 1
-        else:
-            i += 1
-
+            u, v = separar_estacoes(texto_trecho)
+            if u is None:
+                avisos.append(f"Linha {numero_trecho} ({nome_linha}): trecho não reconhecido: {texto_trecho}")
+                continue
+            desconhecidas = [nome for nome in (u, v) if nome not in grafo.estacoes]
+            if desconhecidas:
+                avisos.append(
+                    f"Linha {numero_trecho} ({nome_linha}): estação não cadastrada "
+                    f"{', '.join(repr(n) for n in desconhecidas)}; trecho ignorado."
+                )
+                continue
+            if u == v:
+                avisos.append(f"Linha {numero_trecho} ({nome_linha}): trecho liga '{u}' a ela mesma; ignorado.")
+                continue
+            grafo.adicionar_trecho(u, v, nome_linha, cor)
+            total_trechos += 1
+            lidos += 1
+        if lidos != qtd_trechos:
+            avisos.append(f"{nome_linha}: cabeçalho indica {qtd_trechos} trechos, mas {lidos} foram lidos.")
     return total_trechos
 
 
@@ -465,19 +506,8 @@ def heuristica_maior_ciclo(grafo, inicio):
 
 
 # ======================================================================================
-# 5. PLACEHOLDERS PARA OS COLEGAS (INTEGRANTES 2 E 3)
+# 5. PROBLEMA (C) — COLORAÇÃO DE VÉRTICES (INTEGRANTE 3)
 # ======================================================================================
-def resolver_problema_b(grafo, metodo):
-    """
-    PROBLEMA (B) - CONJUNTO DOMINANTE MÍNIMO (GUICHÊS DE VENDAS)
-    Responsável: Integrante 2
-    Métodos: 'forca_bruta', 'branch_and_bound', 'heuristica'
-    """
-    inicio_tempo = time.perf_counter()
-    # Placeholder demonstrativo:
-    tempo_total = (time.perf_counter() - inicio_tempo) * 1000.0
-    return [], tempo_total, "A ser integrado pelo Integrante 2"
-
 
 LIMITE_DE_TEMPO_GUI_SEGUNDOS = 30.0
 
@@ -724,7 +754,287 @@ def resolver_problema_c(grafo, metodo):
 
 
 # ======================================================================================
-# 6. INTERFACE GRÁFICA (TKINTER) - INTEGRANTE 1
+# 6. PROBLEMA (B) — CONJUNTO DOMINANTE MÍNIMO / GUICHÊS (INTEGRANTE 2)
+# ======================================================================================
+"""
+O PROBLEMA:
+Escolher o menor conjunto de estações para receber guichês de modo que toda estação tenha
+um guichê nela mesma ou em uma estação vizinha (no máximo uma parada de distância).
+É o Conjunto Dominante Mínimo (Minimum Dominating Set), problema NP-Difícil.
+
+REPRESENTAÇÃO:
+As estações são numeradas de 0 a n-1 e um conjunto de estações é um inteiro usado como
+máscara de bits (bit i ligado = estação i está no conjunto). A "cobertura" da estação i é
+a máscara de i e de seus vizinhos, ou seja, as estações atendidas por um guichê em i.
+Juntar coberturas vira um OR entre inteiros e contar estações vira bit_count().
+"""
+
+
+@dataclass
+class ResultadoGuiches:
+    estacoes_com_guiche: list[str]
+    nos_explorados: int
+    podas: int
+    tempo_segundos: float
+    interrompido_por_tempo: bool
+    observacao: str = ""
+
+
+def montar_coberturas(adjacencia: dict[str, set[str]]) -> tuple[list[str], list[int]]:
+    estacoes = sorted(adjacencia)
+    indice_da_estacao = {estacao: indice for indice, estacao in enumerate(estacoes)}
+    coberturas = []
+    for estacao in estacoes:
+        mascara = 1 << indice_da_estacao[estacao]
+        for vizinho in adjacencia[estacao]:
+            mascara |= 1 << indice_da_estacao[vizinho]
+        coberturas.append(mascara)
+    return estacoes, coberturas
+
+
+def indices_da_mascara(mascara: int) -> list[int]:
+    indices = []
+    while mascara:
+        bit_mais_baixo = mascara & -mascara
+        indices.append(bit_mais_baixo.bit_length() - 1)
+        mascara ^= bit_mais_baixo
+    return indices
+
+
+def guiches_atendem_todas(adjacencia: dict[str, set[str]], estacoes_com_guiche: list[str]) -> bool:
+    guiches = set(estacoes_com_guiche)
+    return all(
+        estacao in guiches or not guiches.isdisjoint(vizinhos)
+        for estacao, vizinhos in adjacencia.items()
+    )
+
+
+def guiches_por_guloso(adjacencia: dict[str, set[str]]) -> ResultadoGuiches:
+    """
+    HEURÍSTICA GULOSA (Chvátal) + REMOÇÃO DE REDUNDANTES
+    A cada passo instala o guichê na estação que atende mais estações ainda descobertas.
+    No fim, retira os guichês cujas estações já são atendidas pelos demais.
+    Tempo: no máximo n passos, cada um avaliando as n estações: O(n²) operações de máscara,
+    polinomial no pior caso.
+    Garantia: o resultado é no máximo (1 + ln(Δ + 1)) vezes o ótimo, onde Δ é o maior grau.
+    """
+    inicio = time.perf_counter()
+    estacoes, coberturas = montar_coberturas(adjacencia)
+    todas = (1 << len(estacoes)) - 1
+    escolhidas: list[int] = []
+    atendidas = 0
+    avaliacoes = 0
+    while atendidas != todas:
+        descobertas = todas & ~atendidas
+        melhor_estacao, maior_ganho = -1, 0
+        for indice, cobertura in enumerate(coberturas):
+            avaliacoes += 1
+            ganho = (cobertura & descobertas).bit_count()
+            if ganho > maior_ganho:
+                melhor_estacao, maior_ganho = indice, ganho
+        escolhidas.append(melhor_estacao)
+        atendidas |= coberturas[melhor_estacao]
+    # Tenta retirar primeiro os guichês que atendem menos estações
+    for candidata in sorted(escolhidas, key=lambda indice: coberturas[indice].bit_count()):
+        atendidas_sem_ela = 0
+        for outra in escolhidas:
+            if outra != candidata:
+                atendidas_sem_ela |= coberturas[outra]
+        if atendidas_sem_ela == todas:
+            escolhidas.remove(candidata)
+    return ResultadoGuiches(
+        estacoes_com_guiche=[estacoes[indice] for indice in escolhidas],
+        nos_explorados=avaliacoes,
+        podas=0,
+        tempo_segundos=time.perf_counter() - inicio,
+        interrompido_por_tempo=False,
+    )
+
+
+def guiches_por_forca_bruta(
+    adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
+) -> ResultadoGuiches:
+    """
+    FORÇA BRUTA
+    Testa todos os grupos de 1 estação, depois todos os de 2, de 3, e assim por diante.
+    O primeiro grupo que atende todas as estações é, garantidamente, o menor possível.
+    Tempo: soma de C(n, k) para k = 1..γ (γ = mínimo de guichês), O(2^n) no pior caso.
+    """
+    inicio = time.perf_counter()
+    estacoes, coberturas = montar_coberturas(adjacencia)
+    quantidade_de_estacoes = len(estacoes)
+    todas = (1 << quantidade_de_estacoes) - 1
+    grupos_testados = 0
+    for tamanho in range(1, quantidade_de_estacoes + 1):
+        for grupo in combinations(range(quantidade_de_estacoes), tamanho):
+            grupos_testados += 1
+            if grupos_testados % 4096 == 0 and tempo_esgotado(inicio, limite_de_tempo_segundos):
+                return ResultadoGuiches(
+                    estacoes_com_guiche=list(estacoes),
+                    nos_explorados=grupos_testados,
+                    podas=0,
+                    tempo_segundos=time.perf_counter() - inicio,
+                    interrompido_por_tempo=True,
+                    observacao=(
+                        f"Todos os grupos com menos de {tamanho} guichês foram testados "
+                        "e nenhum atende todas as estações."
+                    ),
+                )
+            atendidas = 0
+            for indice in grupo:
+                atendidas |= coberturas[indice]
+            if atendidas == todas:
+                return ResultadoGuiches(
+                    estacoes_com_guiche=[estacoes[indice] for indice in grupo],
+                    nos_explorados=grupos_testados,
+                    podas=0,
+                    tempo_segundos=time.perf_counter() - inicio,
+                    interrompido_por_tempo=False,
+                )
+    return ResultadoGuiches([], grupos_testados, 0, time.perf_counter() - inicio, False)
+
+
+def guiches_por_branch_and_bound(
+    adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
+) -> ResultadoGuiches:
+    """
+    BRANCH-AND-BOUND
+    Monta grupos de estações como a força bruta, mas guiando a escolha e descartando ramos.
+    Solução inicial: a da heurística gulosa. A busca só aceita grupos menores que ela.
+    Ramificação: escolhe a estação descoberta com MENOS opções de atendimento (ela mesma
+    ou um vizinho disponível). Uma delas precisa receber guichê, então cada opção é um ramo.
+    Sem repetição: no i-ésimo ramo, as opções anteriores ficam proibidas, pois os grupos
+    que as contêm já foram explorados nos ramos anteriores.
+    Limite inferior: se faltam D estações descobertas e nenhuma estação disponível atende
+    mais que G delas, ainda são necessários ao menos ceil(D / G) guichês.
+    Se guichês_atuais + ceil(D / G) >= melhor_encontrado, o ramo é podado.
+    Inviabilidade: se uma estação descoberta só podia ser atendida por estações proibidas,
+    o ramo é podado.
+    """
+    inicio = time.perf_counter()
+    estacoes, coberturas = montar_coberturas(adjacencia)
+    todas = (1 << len(estacoes)) - 1
+    indice_da_estacao = {estacao: indice for indice, estacao in enumerate(estacoes)}
+    solucao_gulosa = guiches_por_guloso(adjacencia)
+    estado = {
+        "melhor": [indice_da_estacao[estacao] for estacao in solucao_gulosa.estacoes_com_guiche],
+        "nos_explorados": 0,
+        "podas": 0,
+        "interrompido_por_tempo": False,
+    }
+    escolhidas: list[int] = []
+
+    def ramificar(atendidas: int, proibidas: int) -> None:
+        estado["nos_explorados"] += 1
+        if estado["nos_explorados"] % 1024 == 0 and tempo_esgotado(inicio, limite_de_tempo_segundos):
+            estado["interrompido_por_tempo"] = True
+        if estado["interrompido_por_tempo"]:
+            return
+        if atendidas == todas:
+            if len(escolhidas) < len(estado["melhor"]):
+                estado["melhor"] = list(escolhidas)
+            return
+        descobertas = todas & ~atendidas
+        disponiveis = todas & ~proibidas
+        maior_ganho = max(
+            ((coberturas[indice] & descobertas).bit_count() for indice in indices_da_mascara(disponiveis)),
+            default=0,
+        )
+        if maior_ganho == 0:
+            estado["podas"] += 1
+            return
+        guiches_que_ainda_faltam = -(-descobertas.bit_count() // maior_ganho)
+        if len(escolhidas) + guiches_que_ainda_faltam >= len(estado["melhor"]):
+            estado["podas"] += 1
+            return
+        estacao_alvo_opcoes = 0
+        for indice in indices_da_mascara(descobertas):
+            opcoes = coberturas[indice] & disponiveis
+            if opcoes == 0:
+                estado["podas"] += 1
+                return
+            if estacao_alvo_opcoes == 0 or opcoes.bit_count() < estacao_alvo_opcoes.bit_count():
+                estacao_alvo_opcoes = opcoes
+        opcoes_por_ganho = sorted(
+            indices_da_mascara(estacao_alvo_opcoes),
+            key=lambda indice: -(coberturas[indice] & descobertas).bit_count(),
+        )
+        for opcao in opcoes_por_ganho:
+            escolhidas.append(opcao)
+            ramificar(atendidas | coberturas[opcao], proibidas)
+            escolhidas.pop()
+            proibidas |= 1 << opcao
+            if estado["interrompido_por_tempo"]:
+                return
+
+    ramificar(0, 0)
+    return ResultadoGuiches(
+        estacoes_com_guiche=[estacoes[indice] for indice in estado["melhor"]],
+        nos_explorados=estado["nos_explorados"],
+        podas=estado["podas"],
+        tempo_segundos=time.perf_counter() - inicio,
+        interrompido_por_tempo=estado["interrompido_por_tempo"],
+    )
+
+
+def montar_mensagem_dos_guiches(adjacencia: dict[str, set[str]], resultado: ResultadoGuiches) -> str:
+    guiches = sorted(resultado.estacoes_com_guiche)
+    linhas_da_mensagem = [
+        f"Guichês necessários: {len(guiches)}",
+        f"Nós explorados: {resultado.nos_explorados:,}",
+    ]
+    if resultado.podas:
+        linhas_da_mensagem.append(f"Podas: {resultado.podas:,}")
+    if resultado.interrompido_por_tempo:
+        linhas_da_mensagem.append(
+            f"AVISO: limite de {LIMITE_DE_TEMPO_GUI_SEGUNDOS:.0f} s atingido; "
+            "esta é a melhor solução encontrada, sem garantia de ótimo."
+        )
+    if resultado.observacao:
+        linhas_da_mensagem.append(resultado.observacao)
+    validos = guiches_atendem_todas(adjacencia, guiches)
+    linhas_da_mensagem.append(
+        "Verificação: toda estação está a no máximo 1 parada de um guichê."
+        if validos
+        else "ERRO: há estações sem guichê a 1 parada."
+    )
+    linhas_da_mensagem.append("")
+    linhas_da_mensagem.append("Estações com guichê:")
+    linhas_da_mensagem.extend(f"  - {estacao}" for estacao in guiches)
+    linhas_da_mensagem.append("")
+    linhas_da_mensagem.append("Atendimento das demais estações:")
+    conjunto_de_guiches = set(guiches)
+    for estacao in sorted(adjacencia):
+        if estacao in conjunto_de_guiches:
+            continue
+        atendentes = sorted(conjunto_de_guiches & adjacencia[estacao])
+        linhas_da_mensagem.append(f"  {estacao} -> {', '.join(atendentes) or 'nenhum'}")
+    return "\n".join(linhas_da_mensagem)
+
+
+def resolver_problema_b(grafo, metodo):
+    """
+    PROBLEMA (B) - CONJUNTO DOMINANTE MÍNIMO (GUICHÊS DE VENDAS)
+    Responsável: Integrante 2
+    Métodos: 'Força Bruta', 'Branch-and-Bound', 'Heurística' (texto do menu da interface)
+    Retorno: (lista_de_estacoes_com_guiche, tempo_ms, mensagem_detalhada)
+    """
+    adjacencia = extrair_adjacencia_simples(grafo)
+    metodo_minusculo = metodo.lower()
+    if "bruta" in metodo_minusculo:
+        resultado = guiches_por_forca_bruta(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
+    elif "bound" in metodo_minusculo:
+        resultado = guiches_por_branch_and_bound(adjacencia, limite_de_tempo_segundos=LIMITE_DE_TEMPO_GUI_SEGUNDOS)
+    elif "heur" in metodo_minusculo:
+        resultado = guiches_por_guloso(adjacencia)
+    else:
+        return [], 0.0, f"Método desconhecido: {metodo}"
+    tempo_ms = resultado.tempo_segundos * 1000.0
+    return sorted(resultado.estacoes_com_guiche), tempo_ms, montar_mensagem_dos_guiches(adjacencia, resultado)
+
+
+# ======================================================================================
+# 7. INTERFACE GRÁFICA (TKINTER) - INTEGRANTE 1
 # ======================================================================================
 class InterfaceMetro(tk.Tk):
     """
@@ -749,6 +1059,7 @@ class InterfaceMetro(tk.Tk):
         self.ciclo_destacado = []       # Problema (a): lista de estações do ciclo encontrado
         self.estacao_selecionada = None # Problema (a): estação de partida selecionada
         self.coloracao_destacada = {}   # Problema (c): dicionário { nome_estacao: id_periodo (int) }
+        self.guiches_destacados = set()  # Problema (b): estações que recebem guichê
 
         # Paleta de cores visuais para os períodos de manutenção (Problema c).
         # Cada índice de período (0, 1, 2, ...) recebe uma cor distinta e legível no Canvas escuro.
@@ -898,11 +1209,13 @@ class InterfaceMetro(tk.Tk):
             return
 
         try:
-            total = carregar_arquivo_estacoes(caminho, self.grafo)
+            avisos = []
+            total = carregar_arquivo_estacoes(caminho, self.grafo, avisos)
+            self._descartar_resultados()
             self._atualizar_dropdown_estacoes()
             self.redesenhar_mapa()
-            self.lbl_status.config(text=f"{total} estações carregadas com sucesso.")
-            messagebox.showinfo("Sucesso", f"{total} estações carregadas!")
+            self.lbl_status.config(text=f"{total} estações carregadas. Agora carregue o arquivo de linhas.")
+            self._mostrar_resultado_da_leitura(f"{total} estações carregadas!", avisos)
         except Exception as e:
             messagebox.showerror("Erro ao Carregar", f"Falha ao ler arquivo de estações:\n{e}")
 
@@ -916,12 +1229,34 @@ class InterfaceMetro(tk.Tk):
             return
 
         try:
-            total = carregar_arquivo_linhas(caminho, self.grafo)
+            avisos = []
+            total = carregar_arquivo_linhas(caminho, self.grafo, avisos)
+            self._descartar_resultados()
             self.redesenhar_mapa()
             self.lbl_status.config(text=f"{total} trechos de linha carregados.")
-            messagebox.showinfo("Sucesso", f"{total} trechos carregados com sucesso!")
+            self._mostrar_resultado_da_leitura(f"{total} trechos carregados com sucesso!", avisos)
         except Exception as e:
             messagebox.showerror("Erro ao Carregar", f"Falha ao ler arquivo de linhas:\n{e}")
+
+    def _mostrar_resultado_da_leitura(self, mensagem_sucesso, avisos):
+        """Mostra o resumo da leitura; se houver avisos, lista os primeiros para o usuário corrigir o arquivo."""
+        if not avisos:
+            messagebox.showinfo("Sucesso", mensagem_sucesso)
+            return
+        limite = 15
+        lista = "\n".join(avisos[:limite])
+        if len(avisos) > limite:
+            lista += f"\n... e mais {len(avisos) - limite} aviso(s)."
+        messagebox.showwarning(
+            "Leitura com avisos",
+            f"{mensagem_sucesso}\n\n{len(avisos)} aviso(s):\n{lista}",
+        )
+
+    def _descartar_resultados(self):
+        """Apaga os resultados calculados, que deixam de valer quando o grafo muda."""
+        self.ciclo_destacado = []
+        self.coloracao_destacada = {}
+        self.guiches_destacados = set()
 
     def _atualizar_dropdown_estacoes(self):
         """Atualiza a lista de opções do Combobox de estações."""
@@ -1033,6 +1368,21 @@ class InterfaceMetro(tk.Tk):
                     borda = "#FFFFFF"
                 r = raio + 2  # Ligeiramente maior para destacar bem a cor
 
+            elif self.guiches_destacados:
+                # Problema (b): estações com guichê ficam verdes, com um anel em volta
+                if nome in self.guiches_destacados:
+                    cor_fundo = "#2ECC71"
+                    borda = "#FFFFFF"
+                    r = raio + 3
+                    self.canvas.create_oval(
+                        cx - r - 5, cy - r - 5, cx + r + 5, cy + r + 5,
+                        outline="#2ECC71", width=2
+                    )
+                else:
+                    cor_fundo = "#FFFFFF"
+                    borda = "#333333"
+                    r = raio
+
             elif nome == self.estacao_selecionada:
                 # Problema (a): estação de partida selecionada pelo usuário
                 cor_fundo = "#00FFFF"  # Ciano
@@ -1098,6 +1448,31 @@ class InterfaceMetro(tk.Tk):
                     x_leg + 22, yy, text=f"Período {id_periodo + 1}",
                     fill="#FFFFFF", font=("Segoe UI", 9), anchor=tk.W
                 )
+
+        # 7. Desenha a legenda dos guichês (Problema b)
+        if self.guiches_destacados:
+            x_leg = 15
+            y_leg = altura_canvas - 60
+            self.canvas.create_rectangle(
+                x_leg - 5, y_leg - 8, x_leg + 215, y_leg + 48,
+                fill="#222222", outline="#555555"
+            )
+            self.canvas.create_oval(
+                x_leg + 2, y_leg + 2, x_leg + 16, y_leg + 16,
+                fill="#2ECC71", outline="#FFFFFF", width=2
+            )
+            self.canvas.create_text(
+                x_leg + 24, y_leg + 9, anchor=tk.W, fill="#FFFFFF", font=("Segoe UI", 9),
+                text=f"Estação com guichê ({len(self.guiches_destacados)})"
+            )
+            self.canvas.create_oval(
+                x_leg + 4, y_leg + 25, x_leg + 14, y_leg + 35,
+                fill="#FFFFFF", outline="#333333", width=2
+            )
+            self.canvas.create_text(
+                x_leg + 24, y_leg + 30, anchor=tk.W, fill="#FFFFFF", font=("Segoe UI", 9),
+                text="Atendida por guichê vizinho"
+            )
 
     def _ao_clicar_no_canvas(self, event):
         """
@@ -1188,7 +1563,9 @@ class InterfaceMetro(tk.Tk):
                 ciclo, tempo_ms, passos = heuristica_maior_ciclo(self.grafo, origem)
                 self.lbl_detalhes_busca.config(text=f"Passos gulosos realizados: {passos}")
 
-            # Atualiza os dados na tela
+            # Atualiza os dados na tela (os destaques dos problemas b e c deixam de ser exibidos)
+            self.coloracao_destacada = {}
+            self.guiches_destacados = set()
             self.ciclo_destacado = ciclo
             self.lbl_tempo.config(text=f"Tempo: {tempo_ms:.3f} ms")
             
@@ -1220,12 +1597,23 @@ class InterfaceMetro(tk.Tk):
         # CASO 2: PROBLEMA (B) - CONJUNTO DOMINANTE (INTEGRANTE 2)
         # -------------------------------------------------------------
         elif "Problema (b)" in problema:
-            self.lbl_status.config(text="Executando Problema (b)...")
+            self.lbl_status.config(text=f"Executando {metodo} para o Problema (b)... Aguarde.")
+            self.update_idletasks()
             res, tempo_ms, msg = resolver_problema_b(self.grafo, metodo)
+            self.guiches_destacados = set(res)
+            self.ciclo_destacado = []
+            self.coloracao_destacada = {}
             self.lbl_tempo.config(text=f"Tempo: {tempo_ms:.3f} ms")
-            self.lbl_metrica.config(text=f"Guichês: {len(res)}")
+            if res:
+                self.lbl_metrica.config(text=f"Guichês necessários: {len(res)}")
+                self.lbl_status.config(text=f"{len(res)} guichês atendem todas as estações.")
+            else:
+                self.lbl_metrica.config(text="Guichês: nenhuma solução")
+                self.lbl_status.config(text="Não foi possível calcular os guichês.")
+            self.lbl_detalhes_busca.config(text="Veja painel lateral para detalhes.")
             self.txt_resultado.delete("1.0", tk.END)
-            self.txt_resultado.insert(tk.END, f"Módulo do Integrante 2:\n{msg}")
+            self.txt_resultado.insert(tk.END, msg)
+            self.redesenhar_mapa()
 
         # -------------------------------------------------------------
         # CASO 3: PROBLEMA (C) - COLORAÇÃO DE VÉRTICES (INTEGRANTE 3)
@@ -1238,8 +1626,9 @@ class InterfaceMetro(tk.Tk):
 
             # Guarda o dicionário { estacao: id_periodo } para o redesenho colorido do mapa
             self.coloracao_destacada = res if res else {}
-            # Garante que o ciclo do Problema (a) seja apagado ao exibir o Problema (c)
+            # Garante que os destaques dos Problemas (a) e (b) sejam apagados ao exibir o Problema (c)
             self.ciclo_destacado = []
+            self.guiches_destacados = set()
 
             self.lbl_tempo.config(text=f"Tempo: {tempo_ms:.3f} ms")
 
@@ -1262,6 +1651,7 @@ class InterfaceMetro(tk.Tk):
         """Limpa as marcações visuais e campos de texto de todos os problemas."""
         self.ciclo_destacado = []       # Limpa o ciclo do Problema (a)
         self.coloracao_destacada = {}   # Limpa a coloração do Problema (c)
+        self.guiches_destacados = set()  # Limpa os guichês do Problema (b)
         self.lbl_tempo.config(text="Tempo: -- ms")
         self.lbl_metrica.config(text="Métrica: --")
         self.lbl_detalhes_busca.config(text="Nós / Podas: --")
@@ -1271,7 +1661,7 @@ class InterfaceMetro(tk.Tk):
 
 
 # ======================================================================================
-# 7. PONTO DE ENTRADA DA APLICAÇÃO
+# 8. PONTO DE ENTRADA DA APLICAÇÃO
 # ======================================================================================
 if __name__ == "__main__":
     app = InterfaceMetro()
