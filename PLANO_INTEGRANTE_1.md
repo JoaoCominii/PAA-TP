@@ -172,10 +172,10 @@ flowchart TD
 
 Quando os Integrantes 2 e 3 finalizarem as suas partes, você precisará apenas executar as seguintes tarefas finais:
 
-- [ ] **1. Plugar o Retorno Visual do Problema (b) — Guichês (Integrante 2):**
+- [✅] **1. Plugar o Retorno Visual do Problema (b) — Guichês (Integrante 2):**
   - O Integrante 2 fornecerá a função `resolver_problema_b(grafo, metodo)` retornando a lista/conjunto de estações escolhidas para guichê.
   - Atualizar a função de desenho do mapa para circular/destacar em verde/azul no Canvas essas estações.
-- [ ] **2. Plugar o Retorno Visual do Problema (c) — Coloração de Vértices (Integrante 3):**
+- [✅] **2. Plugar o Retorno Visual do Problema (c) — Coloração de Vértices (Integrante 3):**
   - O Integrante 3 fornecerá a função `resolver_problema_c(grafo, metodo)` retornando um dicionário `{estacao: id_cor}`.
   - Atualizar o desenho das estações para preencher os círculos com as respectivas cores calculadas.
 - [ ] **3. Rodar os Benchmarks do Grupo:**
@@ -186,7 +186,6 @@ Quando os Integrantes 2 e 3 finalizarem as suas partes, você precisará apenas 
 ---
 
 # 📝 TEXTO PRONTO PARA O RELATÓRIO TÉCNICO (PADRÃO SBC)
-*(Copie o conteúdo das seções abaixo diretamente para o relatório final do grupo)*
 
 ---
 
@@ -195,15 +194,27 @@ Quando os Integrantes 2 e 3 finalizarem as suas partes, você precisará apenas 
 A interface gráfica foi concebida para atender rigorosamente à exigência de portabilidade e ausência de dependências externas nos laboratórios da PUC Minas, utilizando exclusivamente os componentes nativos da biblioteca `tkinter` do Python 3.
 
 ### 1.1. Modelagem do Espaço Visual e Autoescala Dinâmica
-O mapa do Metrô de Paris é renderizado sobre um componente `tk.Canvas`. Dado que as coordenadas cartesianas $(x_i, y_i)$ das estações fornecidas pelo arquivo de entrada possuem amplitudes arbitrárias, foi desenvolvido um algoritmo de projeção linear que mapeia as coordenadas do grafo para o sistema de coordenadas da janela em tempo real, preservando a proporção de aspecto (razão 1:1) para evitar distorções no plano:
+O mapa do Metrô de Paris é renderizado sobre um componente `tk.Canvas`. Dado que as coordenadas cartesianas $(x_i, y_i)$ das estações fornecidas pelo arquivo de entrada possuem amplitudes arbitrárias, foi desenvolvido um algoritmo de projeção linear que mapeia as coordenadas do grafo para o sistema de coordenadas da janela em tempo real, preservando a proporção de aspecto (razão 1:1) para evitar distorções no plano.
 
-$$\text{escala} = \min\left( \frac{W - 2\cdot m}{\max(X) - \min(X)}, \, \frac{H - 2\cdot m}{\max(Y) - \min(Y)} \right)$$
+A escala base é determinada pelo menor fator limitante entre as dimensões do Canvas:
 
-Onde $W$ e $H$ representam a largura e altura disponíveis no Canvas, e $m = 60\text{ px}$ é a margem de respiro visual. As coordenadas na tela $(cx_i, cy_i)$ são obtidas por:
+$$\text{escala}_{\text{base}} = \min\left( \frac{W - 2\cdot m}{\max(X) - \min(X)}, \, \frac{H - 2\cdot m}{\max(Y) - \min(Y)} \right)$$
 
-$$cx_i = m + (x_i - \min(X)) \cdot \text{escala}, \quad cy_i = m + (y_i - \min(Y)) \cdot \text{escala}$$
+Onde $W$ e $H$ representam a largura e a altura disponíveis no Canvas, e $m = 60\text{ px}$ é a margem de respiro visual. Para possibilitar a inspeção precisa em instâncias com elevada densidade de nós e conexões (como a malha completa com 10 linhas e 53 estações), o sistema incorpora um modelo de projeção afim com suporte a **Zoom Interativo e Pan (Translação)**:
 
-O evento `<Configure>` do Canvas foi vinculado ao método de redesenho, assegurando que o mapa se adapte automaticamente a redimensionamentos da janela sem perder nitidez ou esticar componentes.
+$$cx_i = \left( \frac{W}{2} + \Delta x_{\text{pan}} \right) + (x_i - \bar{x}) \cdot (\text{escala}_{\text{base}} \cdot z)$$
+$$cy_i = \left( \frac{H}{2} + \Delta y_{\text{pan}} \right) + (y_i - \bar{y}) \cdot (\text{escala}_{\text{base}} \cdot z)$$
+
+Onde $\bar{x} = \frac{\min(X) + \max(X)}{2}$ e $\bar{y} = \frac{\min(Y) + \max(Y)}{2}$ denotam o ponto central geométrico da malha, $z \in [0.2, 25.0]$ representa o fator multiplicativo de zoom (com valor padrão $z = 1.0$) e $(\Delta x_{\text{pan}}, \Delta y_{\text{pan}})$ define o deslocamento de translação da câmera (*pan*). A arquitetura visual disponibiliza:
+
+* **Zoom Dinâmico Ancorado no Cursor:** O evento `<MouseWheel>` (bem como `<Button-4>` e `<Button-5>` em distribuições Linux) calcula o escalonamento mantendo exatamente estável na tela o ponto focal apontado pelo cursor do usuário, mediante correção analítica instantânea do vetor de translação:
+  $$\Delta x_{\text{pan}}' = x_{\text{foco}} - (x_{\text{foco}} - cx) \cdot \frac{z'}{z} - \frac{W}{2}$$
+  $$\Delta y_{\text{pan}}' = y_{\text{foco}} - (y_{\text{foco}} - cy) \cdot \frac{H}{2}$$
+* **Translação Contínua da Câmera (*Pan*):** Mapeamento dos eventos de movimentação do mouse com botões pressionados (`<B3-Motion>`, `<B2-Motion>` e `<B1-Motion>`), permitindo que o usuário arraste livremente o plano do metrô em qualquer direção sem a necessidade de barras de rolagem convencionais.
+* **Barra de Controle de Navegação:** Controles dedicados integrados à barra de comandos superior com botões para reduzir zoom (`[➖]`), indicador percentual numérico em tempo real (`[100%]`), botão para ampliar zoom (`[➕]`) e restauração automática (`[↺ Ajustar]`), que centraliza a malha e reseta a escala para $100\%$.
+* **Escalonamento Adaptativo de Elementos Gráficos:** Para mitigar sobreposições textuais e poluição visual em visões gerais afastadas, bem como manter os nós equilibrados sob ampliações extremas, as dimensões físicas dos elementos utilizam funções de crescimento sublinear: o raio dos círculos das estações varia com $O(z^{0.35})$, a espessura dos trilhos com $O(z^{0.30})$ e a tipografia com $O(z^{0.25})$. As legendas explicativas (*HUD*) mantêm posicionamento estático ancorado aos cantos da janela.
+
+O evento `<Configure>` do Canvas assegura a autoescala responsiva diante de qualquer redimensionamento da janela da aplicação.
 
 ### 1.2. Recursos de Usabilidade e Destaque Visual
 * **Seleção por Projeção Euclidiana:** O usuário pode selecionar a estação de partida tanto através de uma caixa de combinação (*Combobox*) quanto clicando diretamente sobre o círculo da estação no mapa. O evento de clique calcula a distância euclidiana mínima entre o clique $(x_c, y_c)$ e as estações renderizadas, selecionando o vértice caso a distância seja inferior a $15\text{ px}$.

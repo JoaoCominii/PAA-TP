@@ -1061,6 +1061,14 @@ class InterfaceMetro(tk.Tk):
         self.coloracao_destacada = {}   # Problema (c): dicionário { nome_estacao: id_periodo (int) }
         self.guiches_destacados = set()  # Problema (b): estações que recebem guichê
 
+        # Controle de Zoom e Pan (Navegação dinâmica no Canvas)
+        self.fator_zoom = 1.0
+        self.pan_offset_x = 0.0
+        self.pan_offset_y = 0.0
+        self._pos_mouse_anterior = (0, 0)
+        self._mouse_inicio_clique = (0, 0)
+        self._arrastando_mouse = False
+
         # Paleta de cores visuais para os períodos de manutenção (Problema c).
         # Cada índice de período (0, 1, 2, ...) recebe uma cor distinta e legível no Canvas escuro.
         # Adicionamos 20 cores para suportar grafos com número cromático alto.
@@ -1151,6 +1159,23 @@ class InterfaceMetro(tk.Tk):
         )
         btn_limpar.grid(row=1, column=4, padx=5, pady=5, sticky="w")
 
+        # Controles de Zoom e Centralização
+        frame_zoom = ttk.Frame(frame_topo)
+        frame_zoom.grid(row=1, column=5, padx=5, pady=5, sticky="e")
+
+        ttk.Label(frame_zoom, text="Zoom:").pack(side=tk.LEFT, padx=(0, 2))
+        btn_zoom_out = ttk.Button(frame_zoom, text="➖", width=3, command=self._acao_zoom_out)
+        btn_zoom_out.pack(side=tk.LEFT, padx=1)
+
+        self.lbl_zoom = ttk.Label(frame_zoom, text="100%", width=5, anchor="center")
+        self.lbl_zoom.pack(side=tk.LEFT, padx=1)
+
+        btn_zoom_in = ttk.Button(frame_zoom, text="➕", width=3, command=self._acao_zoom_in)
+        btn_zoom_in.pack(side=tk.LEFT, padx=1)
+
+        btn_reset_zoom = ttk.Button(frame_zoom, text="↺ Ajustar", command=self._acao_reset_zoom)
+        btn_reset_zoom.pack(side=tk.LEFT, padx=(3, 0))
+
         # -------------------------------------------------------------
         # ÁREA PRINCIPAL: MAPA (CANVAS) + PAINEL LATERAL DE RESULTADOS
         # -------------------------------------------------------------
@@ -1161,7 +1186,22 @@ class InterfaceMetro(tk.Tk):
         self.canvas = tk.Canvas(frame_corpo, bg="#1E1E1E", highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", lambda event: self.redesenhar_mapa())
-        self.canvas.bind("<Button-1>", self._ao_clicar_no_canvas)
+
+        # Interações de Navegação no Canvas (Zoom e Pan)
+        self.canvas.bind("<ButtonPress-1>", self._ao_pressionar_mouse)
+        self.canvas.bind("<B1-Motion>", self._ao_arrastar_mouse)
+        self.canvas.bind("<ButtonRelease-1>", self._ao_soltar_mouse)
+
+        # Botão direito ou do meio para arrastar o mapa livremente
+        self.canvas.bind("<ButtonPress-2>", self._ao_pressionar_mouse)
+        self.canvas.bind("<B2-Motion>", self._ao_arrastar_mouse)
+        self.canvas.bind("<ButtonPress-3>", self._ao_pressionar_mouse)
+        self.canvas.bind("<B3-Motion>", self._ao_arrastar_mouse)
+
+        # Zoom pelo scroll do mouse
+        self.canvas.bind("<MouseWheel>", self._ao_scroll_zoom)
+        self.canvas.bind("<Button-4>", lambda e: self._zoom_no_ponto(1.2, e.x, e.y))
+        self.canvas.bind("<Button-5>", lambda e: self._zoom_no_ponto(0.8, e.x, e.y))
 
         # Painel Lateral de Métricas e Logs
         frame_lateral = ttk.LabelFrame(frame_corpo, text=" Métricas & Resultados ", width=320, padding=10)
@@ -1191,7 +1231,8 @@ class InterfaceMetro(tk.Tk):
         # BARRA DE STATUS INFERIOR
         # -------------------------------------------------------------
         self.barra_status = ttk.Label(
-            self, text="Dica: Clique em uma estação no mapa para defini-la como ponto de partida.",
+            self,
+            text="Dicas: Scroll do mouse para Zoom | Arraste (ou botão direito) para Mover | Clique na estação para selecionar",
             relief=tk.SUNKEN, anchor=tk.W, padding=3
         )
         self.barra_status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -1213,6 +1254,10 @@ class InterfaceMetro(tk.Tk):
             total = carregar_arquivo_estacoes(caminho, self.grafo, avisos)
             self._descartar_resultados()
             self._atualizar_dropdown_estacoes()
+            self.fator_zoom = 1.0
+            self.pan_offset_x = 0.0
+            self.pan_offset_y = 0.0
+            self._atualizar_rotulo_zoom()
             self.redesenhar_mapa()
             self.lbl_status.config(text=f"{total} estações carregadas. Agora carregue o arquivo de linhas.")
             self._mostrar_resultado_da_leitura(f"{total} estações carregadas!", avisos)
@@ -1232,6 +1277,10 @@ class InterfaceMetro(tk.Tk):
             avisos = []
             total = carregar_arquivo_linhas(caminho, self.grafo, avisos)
             self._descartar_resultados()
+            self.fator_zoom = 1.0
+            self.pan_offset_x = 0.0
+            self.pan_offset_y = 0.0
+            self._atualizar_rotulo_zoom()
             self.redesenhar_mapa()
             self.lbl_status.config(text=f"{total} trechos de linha carregados.")
             self._mostrar_resultado_da_leitura(f"{total} trechos carregados com sucesso!", avisos)
@@ -1283,25 +1332,14 @@ class InterfaceMetro(tk.Tk):
             self.combo_origem.grid_remove()
 
     # =================================================================
-    # RENDERIZAÇÃO GRÁFICA NO CANVAS (AUTO-ESCALA E DESTAQUES)
+    # CONTROLES DE ZOOM, PAN E NAVEGAÇÃO NO CANVAS
     # =================================================================
-    def redesenhar_mapa(self):
-        """
-        Desenha todo o sistema de metrô no Canvas com cálculo dinâmico de escala
-        para que qualquer conjunto de coordenadas caiba na janela visível.
-        """
-        self.canvas.delete("all")
-
+    def _obter_parametros_escala(self):
+        """Calcula escala e ponto central considerando tamanho do Canvas, zoom e pan."""
         estacoes = self.grafo.estacoes
         if not estacoes:
-            self.canvas.create_text(
-                self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2,
-                text="Carregue os arquivos de estações e linhas para visualizar o mapa.",
-                fill="#888888", font=("Segoe UI", 12)
-            )
-            return
+            return None
 
-        # 1. Determina os limites mínimo e máximo das coordenadas
         xs = [coord[0] for coord in estacoes.values()]
         ys = [coord[1] for coord in estacoes.values()]
         min_x, max_x = min(xs), max(xs)
@@ -1316,14 +1354,153 @@ class InterfaceMetro(tk.Tk):
 
         escala_x = (largura_canvas - 2 * margem) / dx
         escala_y = (altura_canvas - 2 * margem) / dy
-        # Mantém proporção visual uniforme (aspect ratio 1:1)
-        escala = min(escala_x, escala_y)
+        escala_base = min(escala_x, escala_y)
+        escala = escala_base * self.fator_zoom
 
-        # Função interna de conversão das coordenadas do arquivo para o Canvas
+        centro_x = (min_x + max_x) / 2.0
+        centro_y = (min_y + max_y) / 2.0
+        centro_cx = (largura_canvas / 2.0) + self.pan_offset_x
+        centro_cy = (altura_canvas / 2.0) + self.pan_offset_y
+
+        return centro_cx, centro_cy, centro_x, centro_y, escala, escala_base, largura_canvas, altura_canvas
+
+    def _atualizar_rotulo_zoom(self):
+        """Atualiza o texto com a porcentagem de zoom na barra superior."""
+        if hasattr(self, "lbl_zoom"):
+            self.lbl_zoom.config(text=f"{int(round(self.fator_zoom * 100))}%")
+
+    def _zoom_no_ponto(self, fator, foco_x=None, foco_y=None):
+        """Aplica zoom proporcional ancorado no ponto do cursor ou no centro da tela."""
+        novo_zoom = max(0.2, min(self.fator_zoom * fator, 25.0))
+        if abs(novo_zoom - self.fator_zoom) < 1e-4:
+            return
+
+        largura_canvas = max(self.canvas.winfo_width(), 400)
+        altura_canvas = max(self.canvas.winfo_height(), 400)
+
+        if foco_x is None:
+            foco_x = largura_canvas / 2.0
+        if foco_y is None:
+            foco_y = altura_canvas / 2.0
+
+        razao = novo_zoom / self.fator_zoom
+        cx = largura_canvas / 2.0 + self.pan_offset_x
+        cy = altura_canvas / 2.0 + self.pan_offset_y
+
+        self.pan_offset_x = foco_x - (foco_x - cx) * razao - (largura_canvas / 2.0)
+        self.pan_offset_y = foco_y - (foco_y - cy) * razao - (altura_canvas / 2.0)
+        self.fator_zoom = novo_zoom
+        self._atualizar_rotulo_zoom()
+        self.redesenhar_mapa()
+
+    def _acao_zoom_in(self):
+        """Aumenta o zoom em 25%."""
+        self._zoom_no_ponto(1.25)
+
+    def _acao_zoom_out(self):
+        """Diminui o zoom em 20%."""
+        self._zoom_no_ponto(0.8)
+
+    def _acao_reset_zoom(self):
+        """Redefine o zoom para 100% e centraliza o mapa do metrô."""
+        self.fator_zoom = 1.0
+        self.pan_offset_x = 0.0
+        self.pan_offset_y = 0.0
+        self._atualizar_rotulo_zoom()
+        self.redesenhar_mapa()
+
+    def _ao_scroll_zoom(self, event):
+        """Zoom interativo pela roda de rolagem do mouse (Mouse Wheel)."""
+        if event.delta > 0:
+            self._zoom_no_ponto(1.15, event.x, event.y)
+        elif event.delta < 0:
+            self._zoom_no_ponto(1.0 / 1.15, event.x, event.y)
+
+    def _ao_pressionar_mouse(self, event):
+        """Guarda o ponto de início de clique/arraste."""
+        self._pos_mouse_anterior = (event.x, event.y)
+        self._mouse_inicio_clique = (event.x, event.y)
+        self._arrastando_mouse = False
+
+    def _ao_arrastar_mouse(self, event):
+        """Desloca (pan) a câmera pelo Canvas ao arrastar o mouse."""
+        dx = event.x - self._pos_mouse_anterior[0]
+        dy = event.y - self._pos_mouse_anterior[1]
+        self._pos_mouse_anterior = (event.x, event.y)
+
+        dist = math.hypot(event.x - self._mouse_inicio_clique[0], event.y - self._mouse_inicio_clique[1])
+        if dist > 4:
+            self._arrastando_mouse = True
+
+        self.pan_offset_x += dx
+        self.pan_offset_y += dy
+        self.redesenhar_mapa()
+
+    def _ao_soltar_mouse(self, event):
+        """Ao soltar o mouse: se foi apenas um clique rápido, seleciona a estação."""
+        if not self._arrastando_mouse:
+            self._selecionar_estacao_por_clique(event.x, event.y)
+        self._arrastando_mouse = False
+
+    def _selecionar_estacao_por_clique(self, clique_x, clique_y):
+        """Encontra a estação mais próxima dentro do raio de tolerância do clique."""
+        params = self._obter_parametros_escala()
+        if not params:
+            return
+        centro_cx, centro_cy, centro_x, centro_y, escala, _, _, _ = params
+
+        estacao_mais_proxima = None
+        menor_distancia = max(15.0, 18.0 * (self.fator_zoom ** 0.35))
+
+        for nome, (x, y) in self.grafo.estacoes.items():
+            cx = centro_cx + (x - centro_x) * escala
+            cy = centro_cy + (y - centro_y) * escala
+            dist = math.hypot(clique_x - cx, clique_y - cy)
+            if dist < menor_distancia:
+                menor_distancia = dist
+                estacao_mais_proxima = nome
+
+        if estacao_mais_proxima:
+            self.estacao_selecionada = estacao_mais_proxima
+            self.combo_origem.set(estacao_mais_proxima)
+            self.redesenhar_mapa()
+            self.barra_status.config(text=f"Estação selecionada: {estacao_mais_proxima}")
+
+    # =================================================================
+    # RENDERIZAÇÃO GRÁFICA NO CANVAS (AUTO-ESCALA E DESTAQUES)
+    # =================================================================
+    def redesenhar_mapa(self):
+        """
+        Desenha todo o sistema de metrô no Canvas com cálculo dinâmico de escala,
+        zoom e translação (pan).
+        """
+        self.canvas.delete("all")
+
+        estacoes = self.grafo.estacoes
+        if not estacoes:
+            self.canvas.create_text(
+                self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2,
+                text="Carregue os arquivos de estações e linhas para visualizar o mapa.",
+                fill="#888888", font=("Segoe UI", 12)
+            )
+            return
+
+        params = self._obter_parametros_escala()
+        if not params:
+            return
+        centro_cx, centro_cy, centro_x, centro_y, escala, escala_base, largura_canvas, altura_canvas = params
+
         def para_canvas(x, y):
-            cx = margem + (x - min_x) * escala
-            cy = margem + (y - min_y) * escala
+            cx = centro_cx + (x - centro_x) * escala
+            cy = centro_cy + (y - centro_y) * escala
             return cx, cy
+
+        # Espessura das arestas e dimensões dos nós adaptativas ao nível de zoom
+        largura_trilho = max(2, min(int(3 * (self.fator_zoom ** 0.3)), 8))
+        largura_ciclo = max(4, min(int(7 * (self.fator_zoom ** 0.3)), 16))
+        raio = max(5, min(int(7 * (self.fator_zoom ** 0.35)), 15))
+        tam_fonte = max(8, min(int(9 * (self.fator_zoom ** 0.25)), 13))
+        fonte_rotulo = ("Segoe UI", tam_fonte, "bold")
 
         # 2. Desenha todos os trechos normais (arestas)
         for u, v, linha, cor_nome in self.grafo.trechos:
@@ -1331,7 +1508,7 @@ class InterfaceMetro(tk.Tk):
                 x1, y1 = para_canvas(*estacoes[u])
                 x2, y2 = para_canvas(*estacoes[v])
                 cor_hex = obter_cor_hex(cor_nome)
-                self.canvas.create_line(x1, y1, x2, y2, fill=cor_hex, width=3, capstyle=tk.ROUND)
+                self.canvas.create_line(x1, y1, x2, y2, fill=cor_hex, width=largura_trilho, capstyle=tk.ROUND)
 
         # 3. Desenha o destaque do ciclo (se houver um ciclo calculado)
         if self.ciclo_destacado and len(self.ciclo_destacado) > 1:
@@ -1342,18 +1519,18 @@ class InterfaceMetro(tk.Tk):
                     x1, y1 = para_canvas(*estacoes[u])
                     x2, y2 = para_canvas(*estacoes[v])
                     # Linha externa dourada espessa
-                    self.canvas.create_line(x1, y1, x2, y2, fill="#FFD700", width=7, capstyle=tk.ROUND)
+                    self.canvas.create_line(x1, y1, x2, y2, fill="#FFD700", width=largura_ciclo, capstyle=tk.ROUND)
                     # Linha interna de contraste
-                    self.canvas.create_line(x1, y1, x2, y2, fill="#FFFFFF", width=2, capstyle=tk.ROUND)
+                    self.canvas.create_line(x1, y1, x2, y2, fill="#FFFFFF", width=max(1, largura_ciclo // 3), capstyle=tk.ROUND)
 
         # 4. Desenha as estações (vértices)
-        raio = 7
         for nome, (x, y) in estacoes.items():
             cx, cy = para_canvas(x, y)
 
             # Define cor e raio do vértice de acordo com o estado atual da interface:
             # - Problema (a) ativo: estação de partida fica ciano, estações do ciclo ficam douradas.
             # - Problema (c) ativo: cada estação recebe a cor do período de manutenção calculado.
+            # - Problema (b) ativo: estações com guichê ficam verdes com anel externo.
             # - Estado padrão (sem resultado): círculo branco.
             if self.coloracao_destacada:
                 # Problema (c): pinta o círculo com a cor do período de manutenção
@@ -1363,10 +1540,9 @@ class InterfaceMetro(tk.Tk):
                     cor_fundo = self.paleta_periodos[idx_paleta]
                     borda = "#FFFFFF"
                 else:
-                    # Estação sem período atribuído (não deveria ocorrer numa solução válida)
                     cor_fundo = "#888888"
                     borda = "#FFFFFF"
-                r = raio + 2  # Ligeiramente maior para destacar bem a cor
+                r = raio + 2
 
             elif self.guiches_destacados:
                 # Problema (b): estações com guichê ficam verdes, com um anel em volta
@@ -1409,7 +1585,7 @@ class InterfaceMetro(tk.Tk):
             # Rótulo com o nome da estação
             self.canvas.create_text(
                 cx + r + 4, cy, text=nome, fill="#EEEEEE",
-                anchor=tk.W, font=("Segoe UI", 8, "bold"), tags=("texto_vertice",)
+                anchor=tk.W, font=fonte_rotulo, tags=("texto_vertice",)
             )
 
         # 5. Desenha a numeração de visita no ciclo (Problema a)
@@ -1418,13 +1594,11 @@ class InterfaceMetro(tk.Tk):
                 if nome in estacoes:
                     cx, cy = para_canvas(*estacoes[nome])
                     self.canvas.create_text(
-                        cx, cy - 14, text=f"#{idx}", fill="#FFD700",
-                        font=("Segoe UI", 9, "bold")
+                        cx, cy - r - 7, text=f"#{idx}", fill="#FFD700",
+                        font=("Segoe UI", max(8, min(int(9 * (self.fator_zoom ** 0.25)), 13)), "bold")
                     )
 
         # 6. Desenha a legenda de períodos de manutenção (Problema c)
-        # Exibe uma caixinha no canto inferior esquerdo do Canvas mostrando
-        # cada período com sua cor correspondente, para que o usuário entenda o mapa.
         if self.coloracao_destacada:
             ids_unicos = sorted(set(self.coloracao_destacada.values()))
             x_leg = 15
@@ -1473,45 +1647,6 @@ class InterfaceMetro(tk.Tk):
                 x_leg + 24, y_leg + 30, anchor=tk.W, fill="#FFFFFF", font=("Segoe UI", 9),
                 text="Atendida por guichê vizinho"
             )
-
-    def _ao_clicar_no_canvas(self, event):
-        """
-        Permite ao usuário clicar diretamente em uma estação no mapa para
-        defini-la como estação de partida.
-        """
-        estacoes = self.grafo.estacoes
-        if not estacoes:
-            return
-
-        # Recalcula a escala para saber qual estação está próxima do clique
-        xs = [coord[0] for coord in estacoes.values()]
-        ys = [coord[1] for coord in estacoes.values()]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        largura = max(self.canvas.winfo_width(), 400)
-        altura = max(self.canvas.winfo_height(), 400)
-        margem = 60
-        escala = min((largura - 2 * margem) / max(max_x - min_x, 1.0),
-                     (altura - 2 * margem) / max(max_y - min_y, 1.0))
-
-        # Encontra a estação mais próxima dentro de um raio de 15 pixels
-        clique_x, clique_y = event.x, event.y
-        estacao_mais_proxima = None
-        menor_distancia = 15.0
-
-        for nome, (x, y) in estacoes.items():
-            cx = margem + (x - min_x) * escala
-            cy = margem + (y - min_y) * escala
-            dist = math.hypot(clique_x - cx, clique_y - cy)
-            if dist < menor_distancia:
-                menor_distancia = dist
-                estacao_mais_proxima = nome
-
-        if estacao_mais_proxima:
-            self.estacao_selecionada = estacao_mais_proxima
-            self.combo_origem.set(estacao_mais_proxima)
-            self.redesenhar_mapa()
-            self.barra_status.config(text=f"Estação selecionada: {estacao_mais_proxima}")
 
     # =================================================================
     # DISPARO DOS ALGORITMOS
