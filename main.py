@@ -515,12 +515,41 @@ def heuristica_maior_ciclo(grafo, inicio):
 # ======================================================================================
 # 5. PROBLEMA (C) — COLORAÇÃO DE VÉRTICES (INTEGRANTE 3)
 # ======================================================================================
+"""
+O PROBLEMA:
+Determinar o menor número de períodos de manutenção tal que duas estações ligadas
+diretamente por um trecho (de qualquer linha) nunca fiquem em manutenção no mesmo período.
 
+MODELAGEM:
+- Grafo não direcionado G(V, E): V = estações, E = trechos entre estações vizinhas.
+- Cada período de manutenção é uma COR; estações vizinhas precisam ter cores diferentes.
+- A resposta é o número cromático χ(G) e a cor (período) de cada estação.
+- É a Coloração de Vértices, problema NP-Difícil.
+
+CONTRATO USADO PELOS TRÊS MÉTODOS:
+- Entrada: adjacencia (dict estação -> conjunto de vizinhos), simétrica e sem laços.
+- Saída: ResultadoColoracao, com as cores numeradas de 0 a k-1.
+- Os métodos exatos aceitam um limite de tempo e, se ele estourar, devolvem a melhor
+  solução conhecida com interrompido_por_tempo=True.
+"""
+
+# Limite usado pela interface para que a força bruta e o B&B não congelem a janela
 LIMITE_DE_TEMPO_GUI_SEGUNDOS = 30.0
 
 
 @dataclass
 class ResultadoColoracao:
+    """
+    Resultado devolvido por qualquer um dos três métodos de coloração.
+
+    Campos:
+    - cor_por_estacao: cor (período) atribuída a cada estação, de 0 a k-1.
+    - quantidade_de_cores: k, número de cores (períodos) usadas.
+    - nos_explorados: trabalho realizado, usado para comparar os métodos no relatório
+      (atribuições testadas na força bruta, nós da árvore no B&B, testes no Welsh-Powell).
+    - tempo_segundos: tempo de execução do algoritmo.
+    - interrompido_por_tempo: True se o limite de tempo estourou antes do fim da busca.
+    """
     cor_por_estacao: dict[str, int]
     quantidade_de_cores: int
     nos_explorados: int
@@ -529,9 +558,21 @@ class ResultadoColoracao:
 
 
 def coloracao_eh_valida(adjacencia: dict[str, set[str]], cor_por_estacao: dict[str, int]) -> bool:
+    """
+    Verifica se uma coloração é válida para o grafo.
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+    - cor_por_estacao: cor atribuída a cada estação.
+
+    Retorno: True se todas as estações têm cor e nenhum par de vizinhas tem a mesma cor.
+    Complexidade: O(|V| + |E|).
+    """
+    # 1. Toda estação precisa ter recebido uma cor
     for estacao in adjacencia:
         if estacao not in cor_por_estacao:
             return False
+    # 2. Nenhum trecho pode ligar duas estações com a mesma cor
     for estacao, vizinhos in adjacencia.items():
         for vizinho in vizinhos:
             if cor_por_estacao[estacao] == cor_por_estacao.get(vizinho):
@@ -540,34 +581,93 @@ def coloracao_eh_valida(adjacencia: dict[str, set[str]], cor_por_estacao: dict[s
 
 
 def tempo_esgotado(inicio: float, limite_de_tempo_segundos: float | None) -> bool:
+    """
+    Indica se o limite de tempo de um algoritmo já foi atingido.
+
+    Parâmetros:
+    - inicio: instante inicial, obtido com time.perf_counter().
+    - limite_de_tempo_segundos: limite em segundos, ou None para executar sem limite.
+
+    Retorno: True se existe limite e o tempo decorrido já chegou nele.
+    """
     return limite_de_tempo_segundos is not None and time.perf_counter() - inicio >= limite_de_tempo_segundos
 
 
 def colorir_cada_estacao_com_cor_distinta(adjacencia: dict[str, set[str]]) -> dict[str, int]:
+    """
+    Gera a coloração trivial em que cada estação recebe uma cor diferente (k = |V|).
+    É sempre válida e serve de "melhor solução conhecida" quando a força bruta é
+    interrompida antes de encontrar qualquer coloração.
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+
+    Retorno: dict estação -> cor, com cores 0, 1, ..., |V|-1 na ordem do dicionário.
+    """
     return {estacao: indice for indice, estacao in enumerate(adjacencia)}
 
 
 def tamanho_de_clique_gulosa(adjacencia: dict[str, set[str]]) -> int:
+    """
+    Encontra de forma gulosa uma clique (conjunto de estações todas vizinhas entre si)
+    e devolve o seu tamanho. Como os vértices de uma clique precisam de cores distintas,
+    esse tamanho é um LIMITE INFERIOR para o número cromático χ(G).
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+
+    Retorno: tamanho da clique encontrada (não necessariamente a maior clique do grafo).
+    Complexidade: O(|V| log |V|) da ordenação + O(|V| * ω) dos testes, ω = tamanho da clique.
+    """
+    # Estações de maior grau primeiro: têm mais chance de pertencer a uma clique grande
     vertices_por_grau_decrescente = sorted(adjacencia, key=lambda estacao: -len(adjacencia[estacao]))
     clique: list[str] = []
     for estacao in vertices_por_grau_decrescente:
+        # Só entra na clique se for vizinha de todas as estações que já estão nela
         if all(membro in adjacencia[estacao] for membro in clique):
             clique.append(estacao)
     return len(clique)
 
 
 def colorir_por_welsh_powell(adjacencia: dict[str, set[str]]) -> ResultadoColoracao:
+    """
+    ABORDAGEM 3: HEURÍSTICA GULOSA DE WELSH-POWELL
+
+    Explicações:
+    - Ordena as estações por grau decrescente (as mais conectadas, mais difíceis de
+      colorir, são tratadas primeiro).
+    - Para cada cor nova, percorre a lista ordenada e pinta com essa cor toda estação
+      ainda sem cor que não seja vizinha de nenhuma estação já pintada com essa cor.
+    - Repete até todas as estações estarem coloridas. Não há backtracking: a saída é
+      sempre válida, mas não necessariamente ótima.
+    - GARANTIA: usa no máximo Δ+1 cores (Δ = maior grau do grafo).
+    - Complexidade de tempo: O(|V| log |V|) da ordenação + no máximo Δ+1 passadas de
+      O(|V| + |E|) cada, ou seja O(|V| log |V| + (Δ+1)(|V| + |E|)); como Δ < |V|, no pior
+      caso fica O(|V| * (|V| + |E|)).
+    - Complexidade de memória: O(|V|) (lista ordenada, cores e conjunto da cor atual).
+    - Exemplo em que NÃO acha o ótimo: grafo "coroa" (K_n,n sem o emparelhamento perfeito,
+      u_i ligado a w_j sempre que i != j) na ordem u0, w0, u1, w1, ...; todos têm o mesmo
+      grau, então a heurística pinta {u_i, w_i} juntos e usa n cores, enquanto χ = 2.
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+
+    Retorno: ResultadoColoracao (interrompido_por_tempo é sempre False).
+    """
     inicio = time.perf_counter()
+    # Ordenação estável por grau decrescente: empates mantêm a ordem do dicionário
     vertices_por_grau_decrescente = sorted(adjacencia, key=lambda estacao: -len(adjacencia[estacao]))
     cor_por_estacao: dict[str, int] = {}
     tentativas_de_colorir = 0
     cor_atual = 0
     while len(cor_por_estacao) < len(vertices_por_grau_decrescente):
+        # Nova cor: começa sem nenhuma estação pintada com ela
         estacoes_com_cor_atual: set[str] = set()
         for estacao in vertices_por_grau_decrescente:
             if estacao in cor_por_estacao:
                 continue
             tentativas_de_colorir += 1
+            # Pode receber a cor atual se nenhum vizinho já estiver com ela
             if adjacencia[estacao].isdisjoint(estacoes_com_cor_atual):
                 cor_por_estacao[estacao] = cor_atual
                 estacoes_com_cor_atual.add(estacao)
@@ -584,12 +684,37 @@ def colorir_por_welsh_powell(adjacencia: dict[str, set[str]]) -> ResultadoColora
 def colorir_por_forca_bruta(
     adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
 ) -> ResultadoColoracao:
+    """
+    ABORDAGEM 1: FORÇA BRUTA PURA (GENERATE-AND-TEST - SEM PODAS)
+
+    Explicações:
+    - É a referência exaustiva: não usa recursão, backtracking nem poda.
+    - Testa k = 1, 2, ..., |V| cores. Para cada k, gera cegamente com itertools.product
+      TODAS as k^|V| atribuições de cores às estações e testa cada uma com
+      coloracao_eh_valida.
+    - A primeira atribuição válida encontrada é ótima: como os k são testados em ordem
+      crescente, qualquer coloração com menos cores já teria sido achada antes.
+    - Complexidade de tempo: O(Σ_{k=1..χ} k^|V| * (|V| + |E|)), exponencial; no pior caso
+      (χ = |V|) chega a O(|V|^|V| * (|V| + |E|)).
+    - Complexidade de memória: O(|V| + |E|), pois o product gera uma atribuição por vez.
+    - Se o limite de tempo estourar, devolve a coloração trivial com uma cor por estação
+      (sempre válida), com interrompido_por_tempo=True.
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+    - limite_de_tempo_segundos: limite em segundos, ou None para executar sem limite.
+
+    Retorno: ResultadoColoracao; nos_explorados = número de atribuições testadas.
+    """
     inicio = time.perf_counter()
     estacoes = list(adjacencia)
     quantidade_de_estacoes = len(estacoes)
     atribuicoes_testadas = 0
+    # Testa as quantidades de cores em ordem crescente: a primeira válida é o ótimo
     for quantidade_de_cores in range(1, quantidade_de_estacoes + 1):
+        # Gera todas as k^n atribuições possíveis (posição i = cor da estação i)
         for atribuicao_de_cores in product(range(quantidade_de_cores), repeat=quantidade_de_estacoes):
+            # Estourou o limite: devolve a coloração trivial, que é sempre válida
             if tempo_esgotado(inicio, limite_de_tempo_segundos):
                 return ResultadoColoracao(
                     cor_por_estacao=colorir_cada_estacao_com_cor_distinta(adjacencia),
@@ -600,6 +725,7 @@ def colorir_por_forca_bruta(
                 )
             atribuicoes_testadas += 1
             cor_por_estacao = dict(zip(estacoes, atribuicao_de_cores))
+            # Teste direto da atribuição candidata
             if coloracao_eh_valida(adjacencia, cor_por_estacao):
                 return ResultadoColoracao(
                     cor_por_estacao=cor_por_estacao,
@@ -608,6 +734,7 @@ def colorir_por_forca_bruta(
                     tempo_segundos=time.perf_counter() - inicio,
                     interrompido_por_tempo=False,
                 )
+    # Só chega aqui com o grafo vazio: nenhuma estação, nenhuma cor
     return ResultadoColoracao(
         cor_por_estacao={},
         quantidade_de_cores=0,
@@ -620,9 +747,43 @@ def colorir_por_forca_bruta(
 def colorir_por_branch_and_bound(
     adjacencia: dict[str, set[str]], limite_de_tempo_segundos: float | None = None
 ) -> ResultadoColoracao:
+    """
+    ABORDAGEM 2: BRANCH-AND-BOUND COM RAMIFICAÇÃO DSATUR
+
+    Explicações:
+    - Produz o mesmo χ(G) da força bruta, explorando muito menos nós.
+    - LIMITE SUPERIOR (melhor solução conhecida):
+      Começa com a coloração do Welsh-Powell. Toda coloração completa melhor encontrada
+      na busca passa a ser o novo limite superior.
+    - LIMITE INFERIOR:
+      Tamanho de uma clique encontrada de forma gulosa (os vértices de uma clique exigem
+      cores distintas). Se o limite superior igualar o inferior, o ótimo está provado e a
+      busca para imediatamente (às vezes sem explorar nenhum nó).
+    - RAMIFICAÇÃO (estilo DSatur):
+      Em cada nó, escolhe a estação sem cor com maior saturação (número de cores distintas
+      nos vizinhos), desempatando pelo maior grau. Tenta primeiro as cores já usadas no
+      ramo que não conflitam com os vizinhos e, por último, uma cor nova.
+    - PODA (BOUND):
+      Se as cores usadas no ramo já são >= melhor k encontrado, o ramo não pode melhorar
+      a solução e é descartado. A cor nova só é tentada se ainda puder dar menos cores.
+    - Complexidade de tempo: exponencial no pior caso, O(k^|V|) nós com O(|V| + Δ) de
+      trabalho por nó (escolha da estação e atualização da saturação); na prática as podas
+      e os limites cortam a maior parte da árvore.
+    - Complexidade de memória: O(|V| * k + |E|) para as contagens de cores dos vizinhos,
+      mais O(|V|) de pilha de recursão (profundidade = número de estações).
+    - Se o limite de tempo estourar, devolve a melhor coloração conhecida (no mínimo a do
+      Welsh-Powell) com interrompido_por_tempo=True.
+
+    Parâmetros:
+    - adjacencia: estação -> conjunto de estações vizinhas.
+    - limite_de_tempo_segundos: limite em segundos, ou None para executar sem limite.
+
+    Retorno: ResultadoColoracao; nos_explorados = nós da árvore de busca visitados.
+    """
     inicio = time.perf_counter()
     estacoes = list(adjacencia)
     quantidade_de_estacoes = len(estacoes)
+    # Limite superior inicial: solução da heurística de Welsh-Powell
     resultado_da_heuristica = colorir_por_welsh_powell(adjacencia)
     estado = {
         "melhor_coloracao": dict(resultado_da_heuristica.cor_por_estacao),
@@ -631,34 +792,47 @@ def colorir_por_branch_and_bound(
         "interrompido_por_tempo": False,
         "otimo_provado": False,
     }
+    # Limite inferior: tamanho da clique gulosa; se a heurística já o atinge, é ótima
     limite_inferior = tamanho_de_clique_gulosa(adjacencia)
     if estado["melhor_quantidade_de_cores"] <= limite_inferior:
         estado["otimo_provado"] = True
 
     cor_por_estacao: dict[str, int] = {}
+    # Para cada estação: cor -> quantos vizinhos têm essa cor (saturação = nº de chaves)
     quantidade_de_vizinhos_por_cor: dict[str, dict[int, int]] = {estacao: {} for estacao in estacoes}
 
     def pintar_estacao(estacao: str, cor: int) -> None:
+        """Atribui a cor à estação e atualiza a contagem de cores dos seus vizinhos. O(grau)."""
         cor_por_estacao[estacao] = cor
         for vizinho in adjacencia[estacao]:
             contagem_do_vizinho = quantidade_de_vizinhos_por_cor[vizinho]
             contagem_do_vizinho[cor] = contagem_do_vizinho.get(cor, 0) + 1
 
     def despintar_estacao(estacao: str) -> None:
+        """Desfaz pintar_estacao (backtracking), removendo a cor dos contadores dos vizinhos. O(grau)."""
         cor = cor_por_estacao.pop(estacao)
         for vizinho in adjacencia[estacao]:
             contagem_do_vizinho = quantidade_de_vizinhos_por_cor[vizinho]
             contagem_do_vizinho[cor] -= 1
+            # Nenhum vizinho tem mais essa cor: ela deixa de contar na saturação
             if contagem_do_vizinho[cor] == 0:
                 del contagem_do_vizinho[cor]
 
     def escolher_estacao_com_maior_saturacao() -> str:
+        """
+        Regra DSatur: devolve a estação sem cor com maior saturação; empate pelo maior grau
+        e, persistindo, pela ordem do dicionário. O(|V|).
+        """
         return max(
             (estacao for estacao in estacoes if estacao not in cor_por_estacao),
             key=lambda estacao: (len(quantidade_de_vizinhos_por_cor[estacao]), len(adjacencia[estacao])),
         )
 
     def busca_deve_parar() -> bool:
+        """
+        Retorno: True se o ótimo já foi provado ou se o limite de tempo estourou
+        (neste caso marca interrompido_por_tempo).
+        """
         if estado["otimo_provado"] or estado["interrompido_por_tempo"]:
             return True
         if tempo_esgotado(inicio, limite_de_tempo_segundos):
@@ -667,32 +841,46 @@ def colorir_por_branch_and_bound(
         return False
 
     def ramificar(cores_usadas_no_ramo: int) -> None:
+        """
+        Expande um nó da árvore de busca (DFS recursiva).
+
+        Parâmetros:
+        - cores_usadas_no_ramo: quantas cores distintas a coloração parcial atual usa
+          (as cores do ramo são sempre 0..cores_usadas_no_ramo-1).
+        """
         if busca_deve_parar():
             return
         estado["nos_explorados"] += 1
+        # PODA: o ramo já usa tantas cores quanto a melhor solução, não pode melhorar
         if cores_usadas_no_ramo >= estado["melhor_quantidade_de_cores"]:
             return
+        # Todas as estações coloridas: nova melhor solução (novo limite superior)
         if len(cor_por_estacao) == quantidade_de_estacoes:
             estado["melhor_coloracao"] = dict(cor_por_estacao)
             estado["melhor_quantidade_de_cores"] = cores_usadas_no_ramo
+            # Atingiu o limite inferior: ótimo provado, encerra toda a busca
             if cores_usadas_no_ramo <= limite_inferior:
                 estado["otimo_provado"] = True
             return
         estacao_escolhida = escolher_estacao_com_maior_saturacao()
         cores_proibidas = quantidade_de_vizinhos_por_cor[estacao_escolhida]
+        # Ramos 1..k: cores já usadas no ramo que nenhum vizinho tem
         for cor_ja_usada in range(cores_usadas_no_ramo):
             if cor_ja_usada in cores_proibidas:
                 continue
             pintar_estacao(estacao_escolhida, cor_ja_usada)
             ramificar(cores_usadas_no_ramo)
+            # Backtracking
             despintar_estacao(estacao_escolhida)
             if busca_deve_parar():
                 return
+        # Último ramo: cor nova, só se ainda puder dar menos cores que a melhor solução
         if cores_usadas_no_ramo + 1 < estado["melhor_quantidade_de_cores"]:
             pintar_estacao(estacao_escolhida, cores_usadas_no_ramo)
             ramificar(cores_usadas_no_ramo + 1)
             despintar_estacao(estacao_escolhida)
 
+    # A profundidade da recursão cresce com o nº de estações: aumenta o limite temporariamente
     limite_de_recursao_original = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limite_de_recursao_original, 2 * quantidade_de_estacoes + 100))
     try:
@@ -710,6 +898,18 @@ def colorir_por_branch_and_bound(
 
 
 def extrair_adjacencia_simples(grafo: GrafoMetro) -> dict[str, set[str]]:
+    """
+    Converte o GrafoMetro na adjacência simples usada pelos algoritmos dos problemas (b) e (c):
+    só importa se duas estações são vizinhas, não por quais linhas.
+
+    Parâmetros:
+    - grafo: GrafoMetro já carregado com estações e trechos.
+
+    Retorno: dict estação -> conjunto de vizinhos, incluindo estações sem trechos.
+    Descarta laços e vizinhos que não estão em grafo.estacoes (o parser pode criar
+    adjacência para nomes desconhecidos, o que quebraria os algoritmos).
+    Complexidade: O(|V| + |E|).
+    """
     return {
         estacao: {
             vizinho
@@ -721,6 +921,16 @@ def extrair_adjacencia_simples(grafo: GrafoMetro) -> dict[str, set[str]]:
 
 
 def montar_mensagem_da_coloracao(resultado: ResultadoColoracao) -> str:
+    """
+    Monta o texto exibido na interface para o problema (c).
+
+    Parâmetros:
+    - resultado: ResultadoColoracao devolvido por um dos três métodos.
+
+    Retorno: texto com o nº de períodos, os nós explorados, o aviso de interrupção por
+    tempo (se houver) e a lista "Período k: estação, estação, ..." agrupada por cor.
+    """
+    # Agrupa as estações pela cor recebida
     estacoes_por_periodo: dict[int, list[str]] = {}
     for estacao, cor in resultado.cor_por_estacao.items():
         estacoes_por_periodo.setdefault(cor, []).append(estacao)
@@ -734,6 +944,7 @@ def montar_mensagem_da_coloracao(resultado: ResultadoColoracao) -> str:
             "esta é a melhor solução encontrada, sem garantia de ótimo."
         )
     linhas_da_mensagem.append("")
+    # Períodos numerados a partir de 1 (cor + 1), estações em ordem alfabética
     for cor in sorted(estacoes_por_periodo):
         linhas_da_mensagem.append(f"Período {cor + 1}: {', '.join(sorted(estacoes_por_periodo[cor]))}")
     return "\n".join(linhas_da_mensagem)
@@ -744,6 +955,9 @@ def resolver_problema_c(grafo, metodo):
     PROBLEMA (C) - COLORAÇÃO DE VÉRTICES (PERÍODOS DE MANUTENÇÃO)
     Responsável: Integrante 3
     Métodos: 'forca_bruta', 'branch_and_bound', 'heuristica'
+    Também aceita os textos do menu da interface: 'Força Bruta', 'Branch-and-Bound', 'Heurística'.
+    Força bruta e branch-and-bound rodam com limite de LIMITE_DE_TEMPO_GUI_SEGUNDOS.
+    Retorno: (cor_por_estacao, tempo_ms, mensagem_detalhada)
     """
     adjacencia = extrair_adjacencia_simples(grafo)
     # Normaliza o nome do método para ser robusto a acentos e variações de string
@@ -756,6 +970,7 @@ def resolver_problema_c(grafo, metodo):
         resultado = colorir_por_welsh_powell(adjacencia)
     else:
         return {}, 0.0, f"Método desconhecido: {metodo}"
+    # A interface espera o tempo em milissegundos
     tempo_ms = resultado.tempo_segundos * 1000.0
     return resultado.cor_por_estacao, tempo_ms, montar_mensagem_da_coloracao(resultado)
 
@@ -1040,12 +1255,45 @@ def resolver_problema_b(grafo, metodo):
     return sorted(resultado.estacoes_com_guiche), tempo_ms, montar_mensagem_dos_guiches(adjacencia, resultado)
 
 
+# ======================================================================================
+# 6.1 BENCHMARKS E AUTOMAÇÃO DE TESTES (INTEGRANTE 3)
+# ======================================================================================
+"""
+O BENCHMARK:
+Mede tempo, memória e nós explorados dos 9 algoritmos (3 problemas x 3 métodos) em
+instâncias crescentes do metrô, para os gráficos e tabelas do relatório.
+
+COMO FUNCIONA:
+1. Instâncias: grafos com as primeiras k linhas do metrô, k = 2, 4, 6, 8 e 10, lidos dos
+   arquivos dados/estacoes_XX.txt e dados/linhas_XX.txt.
+2. Medição: cada algoritmo roda em um processo separado (spawn) com limite de tempo
+   (padrão 60 s); o processo é encerrado se estourar. São 3 repetições só de tempo
+   (usa-se a mediana) e 1 rodada extra só para o pico de memória com tracemalloc,
+   porque o tracemalloc distorce o tempo.
+3. Conferência: força bruta x branch-and-bound devem dar o mesmo valor; as heurísticas
+   precisam ser válidas e são comparadas com o ótimo.
+4. Saída: resultados_benchmark.csv e graficos/tempos_problema_{a,b,c}.dat (pgfplots).
+
+USO: python main.py --benchmark [--limite N]   ou   python main.py --graficos
+"""
+
+# Quantidades de linhas do metrô de cada instância do benchmark
 QUANTIDADES_DE_LINHAS_DAS_INSTANCIAS = (2, 4, 6, 8, 10)
 PASTA_DAS_INSTANCIAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dados")
 
 
 @dataclass
 class InstanciaDeBenchmark:
+    """
+    Uma instância do benchmark.
+
+    Campos:
+    - quantidade_de_linhas: k, número de linhas do metrô usadas no grafo.
+    - grafo: GrafoMetro só com as estações e trechos dessas linhas.
+    - estacao_de_partida_do_problema_a: estação de partida usada no problema (a).
+    - quantidade_de_estacoes: |V| da instância.
+    - quantidade_de_trechos: |E| da instância (trechos distintos).
+    """
     quantidade_de_linhas: int
     grafo: GrafoMetro
     estacao_de_partida_do_problema_a: str
@@ -1054,9 +1302,20 @@ class InstanciaDeBenchmark:
 
 
 def gerar_instancia_com_primeiras_linhas(arquivo_de_estacoes, arquivo_de_linhas, quantidade_de_linhas) -> GrafoMetro:
+    """
+    Carrega os arquivos do metrô e monta um grafo só com as primeiras linhas.
+
+    Parâmetros:
+    - arquivo_de_estacoes: caminho do arquivo de estações.
+    - arquivo_de_linhas: caminho do arquivo de linhas.
+    - quantidade_de_linhas: quantas linhas usar, na ordem em que aparecem no arquivo.
+
+    Retorno: GrafoMetro com as estações e os trechos dessas linhas.
+    """
     grafo_completo = GrafoMetro()
     carregar_arquivo_estacoes(arquivo_de_estacoes, grafo_completo)
     carregar_arquivo_linhas(arquivo_de_linhas, grafo_completo)
+    # Lista os nomes das linhas na ordem do arquivo, sem repetir
     linhas_na_ordem_do_arquivo: list[str] = []
     for _, _, nome_linha, _ in grafo_completo.trechos:
         if nome_linha not in linhas_na_ordem_do_arquivo:
@@ -1066,6 +1325,7 @@ def gerar_instancia_com_primeiras_linhas(arquivo_de_estacoes, arquivo_de_linhas,
         trecho for trecho in grafo_completo.trechos if trecho[2] in linhas_escolhidas
     ]
     grafo_da_instancia = GrafoMetro()
+    # Primeiro só as estações que aparecem nos trechos escolhidos, depois os trechos
     for estacao_origem, estacao_destino, _, _ in trechos_das_linhas_escolhidas:
         for estacao in (estacao_origem, estacao_destino):
             if estacao not in grafo_da_instancia.estacoes:
@@ -1077,14 +1337,37 @@ def gerar_instancia_com_primeiras_linhas(arquivo_de_estacoes, arquivo_de_linhas,
 
 
 def escolher_estacao_de_maior_grau(grafo: GrafoMetro) -> str:
+    """
+    Escolhe a estação de partida do problema (a) de forma determinística.
+
+    Parâmetros:
+    - grafo: GrafoMetro da instância.
+
+    Retorno: estação de maior grau; empate resolvido pela ordem alfabética do nome.
+    """
     return min(grafo.obter_todos_os_vertices(), key=lambda estacao: (-grafo.grau(estacao), estacao))
 
 
 def contar_trechos_distintos(grafo: GrafoMetro) -> int:
+    """
+    Conta as arestas distintas do grafo (um mesmo par de estações em linhas diferentes
+    conta uma vez só), que é o |E| visto pelos algoritmos.
+
+    Parâmetros:
+    - grafo: GrafoMetro da instância.
+
+    Retorno: soma dos graus / 2.
+    """
     return sum(grafo.grau(estacao) for estacao in grafo.obter_todos_os_vertices()) // 2
 
 
 def gerar_instancias_para_benchmark() -> list[InstanciaDeBenchmark]:
+    """
+    Monta uma instância para cada valor de QUANTIDADES_DE_LINHAS_DAS_INSTANCIAS,
+    lendo os arquivos dados/estacoes_XX.txt e dados/linhas_XX.txt (XX = k com 2 dígitos).
+
+    Retorno: lista de InstanciaDeBenchmark em ordem crescente de k.
+    """
     instancias = []
     for quantidade_de_linhas in QUANTIDADES_DE_LINHAS_DAS_INSTANCIAS:
         arquivo_de_estacoes = os.path.join(PASTA_DAS_INSTANCIAS, f"estacoes_{quantidade_de_linhas:02d}.txt")
@@ -1102,13 +1385,24 @@ def gerar_instancias_para_benchmark() -> list[InstanciaDeBenchmark]:
     return instancias
 
 
+# Limite de tempo de cada execução no benchmark (pode ser trocado com --limite N)
 LIMITE_DE_TEMPO_PADRAO_SEGUNDOS = 60.0
+# Repetições só de tempo; o tempo registrado é a mediana delas
 QUANTIDADE_DE_REPETICOES_DA_MEDICAO = 3
+# Espera máxima para o processo filho subir e avisar que começou (não conta no limite)
 LIMITE_DE_TEMPO_PARA_INICIAR_PROCESSO_SEGUNDOS = 60.0
 
 
 @dataclass
 class ResultadoDoAlgoritmoParaBenchmark:
+    """
+    Saída padronizada de um algoritmo no benchmark.
+
+    Campos:
+    - resultado: valor da solução ((a) nº de estações do ciclo, (b) nº de guichês, (c) nº de cores).
+    - nos_explorados: medida de trabalho do algoritmo (nós, permutações, passos...).
+    - solucao: a solução em si (ciclo, lista de guichês ou cores), usada para validar.
+    """
     resultado: int
     nos_explorados: int
     solucao: object
@@ -1116,6 +1410,18 @@ class ResultadoDoAlgoritmoParaBenchmark:
 
 @dataclass
 class ResultadoDaMedicao:
+    """
+    Resultado da medição de um algoritmo em uma instância.
+
+    Campos:
+    - resultado: valor da solução, ou None se foi interrompido por tempo.
+    - tempo_mediano_segundos: mediana das repetições; se interrompido, igual ao limite.
+    - pico_de_memoria_kb: pico de memória do algoritmo, ou None se não foi medido.
+    - nos_explorados: medida de trabalho, ou None se foi interrompido por tempo.
+    - interrompido_por_tempo: True se alguma repetição estourou o limite.
+    - tempos_das_repeticoes_segundos: tempos de cada repetição concluída.
+    - solucao: solução devolvida pelo algoritmo (None se interrompido).
+    """
     resultado: int | None
     tempo_mediano_segundos: float
     pico_de_memoria_kb: float | None
@@ -1126,54 +1432,79 @@ class ResultadoDaMedicao:
 
 
 def contar_estacoes_do_ciclo(ciclo: list[str]) -> int:
+    """
+    Parâmetros:
+    - ciclo: lista de estações começando e terminando na partida, ou vazia.
+
+    Retorno: nº de estações distintas do ciclo (sem contar o retorno); 0 se vazio.
+    """
     return len(ciclo) - 1 if ciclo else 0
 
 
+"""
+WRAPPERS DO BENCHMARK:
+As 9 funções *_para_benchmark abaixo recebem só o GrafoMetro, chamam o algoritmo de cada
+problema/método e devolvem um ResultadoDoAlgoritmoParaBenchmark. Ficam no nível do módulo
+para poderem ser enviadas (pickle) ao processo filho criado com spawn. Os problemas (b) e (c)
+são chamados sem limite interno de tempo: o limite é aplicado pelo processo separado.
+"""
+
+
 def maior_ciclo_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (a), força bruta, partindo da estação de maior grau; nós = permutações avaliadas."""
     ciclo, _, permutacoes_avaliadas = forca_bruta_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), permutacoes_avaliadas, ciclo)
 
 
 def maior_ciclo_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (a), branch-and-bound, partindo da estação de maior grau; nós = nós expandidos."""
     ciclo, _, nos_expandidos, _ = branch_and_bound_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), nos_expandidos, ciclo)
 
 
 def maior_ciclo_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (a), heurística gulosa, partindo da estação de maior grau; nós = passos."""
     ciclo, _, passos = heuristica_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), passos, ciclo)
 
 
 def guiches_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (b), força bruta; resultado = nº de guichês."""
     resultado = guiches_por_forca_bruta(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
 
 
 def guiches_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (b), branch-and-bound; resultado = nº de guichês."""
     resultado = guiches_por_branch_and_bound(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
 
 
 def guiches_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (b), heurística gulosa; resultado = nº de guichês."""
     resultado = guiches_por_guloso(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
 
 
 def coloracao_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (c), força bruta; resultado = nº de cores; nós = atribuições testadas."""
     resultado = colorir_por_forca_bruta(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
 
 
 def coloracao_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (c), branch-and-bound; resultado = nº de cores; nós = nós da árvore."""
     resultado = colorir_por_branch_and_bound(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
 
 
 def coloracao_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    """Problema (c), Welsh-Powell; resultado = nº de cores; nós = testes de vértice."""
     resultado = colorir_por_welsh_powell(extrair_adjacencia_simples(grafo))
     return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
 
 
+# Tabela (problema, método, função) com os 9 algoritmos, na ordem em que o benchmark roda
 ALGORITMOS_PARA_BENCHMARK = [
     ("a", "forca_bruta", maior_ciclo_por_forca_bruta_para_benchmark),
     ("a", "branch_and_bound", maior_ciclo_por_branch_and_bound_para_benchmark),
@@ -1188,8 +1519,23 @@ ALGORITMOS_PARA_BENCHMARK = [
 
 
 def executar_algoritmo_no_processo_filho(funcao, grafo, deve_medir_memoria, fila_de_mensagens) -> None:
+    """
+    Código executado dentro do processo filho: roda o algoritmo uma vez e envia o
+    resultado ao processo pai pela fila.
+
+    Parâmetros:
+    - funcao: um dos wrappers *_para_benchmark.
+    - grafo: GrafoMetro da instância (já desserializado no filho).
+    - deve_medir_memoria: se True, mede o pico de memória com tracemalloc.
+    - fila_de_mensagens: fila multiprocessing para falar com o pai.
+
+    Mensagens enviadas: ("iniciado", None), depois ("concluido", (resultado, tempo, pico_kb))
+    ou ("erro", traceback).
+    """
+    # Avisa o pai que o processo já subiu: o limite de tempo só começa a contar daqui
     fila_de_mensagens.put(("iniciado", None))
     try:
+        # tracemalloc começa depois do grafo carregado: o pico mede só o algoritmo
         if deve_medir_memoria:
             tracemalloc.start()
         inicio = time.perf_counter()
@@ -1206,6 +1552,20 @@ def executar_algoritmo_no_processo_filho(funcao, grafo, deve_medir_memoria, fila
 
 
 def executar_em_processo_separado_com_timeout(funcao, grafo, deve_medir_memoria, limite_de_tempo_segundos):
+    """
+    Roda o algoritmo em um processo novo (spawn) e o encerra se passar do limite de tempo.
+    Usar um processo separado permite interromper qualquer algoritmo, mesmo os que não
+    checam o tempo internamente.
+
+    Parâmetros:
+    - funcao: um dos wrappers *_para_benchmark.
+    - grafo: GrafoMetro da instância.
+    - deve_medir_memoria: se True, o filho mede o pico de memória.
+    - limite_de_tempo_segundos: tempo máximo após o filho avisar que iniciou.
+
+    Retorno: tupla (ResultadoDoAlgoritmoParaBenchmark, tempo_segundos, pico_kb) ou None
+    se estourou o limite. Lança RuntimeError se o algoritmo falhou no filho.
+    """
     contexto = multiprocessing.get_context("spawn")
     fila_de_mensagens = contexto.Queue()
     processo = contexto.Process(
@@ -1215,11 +1575,14 @@ def executar_em_processo_separado_com_timeout(funcao, grafo, deve_medir_memoria,
     )
     processo.start()
     try:
+        # 1ª mensagem: "iniciado" (exclui do limite o custo de criar o processo e importar)
         fila_de_mensagens.get(timeout=LIMITE_DE_TEMPO_PARA_INICIAR_PROCESSO_SEGUNDOS)
+        # 2ª mensagem: resultado ou erro, dentro do limite de tempo
         tipo_da_mensagem, conteudo = fila_de_mensagens.get(timeout=limite_de_tempo_segundos)
     except queue.Empty:
         return None
     finally:
+        # Mata o filho se ele ainda estiver rodando (timeout) e libera os recursos
         if processo.is_alive():
             processo.terminate()
         processo.join()
@@ -1230,8 +1593,21 @@ def executar_em_processo_separado_com_timeout(funcao, grafo, deve_medir_memoria,
 
 
 def medir_execucao(funcao, grafo, limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRAO_SEGUNDOS) -> ResultadoDaMedicao:
+    """
+    Mede um algoritmo em uma instância: QUANTIDADE_DE_REPETICOES_DA_MEDICAO execuções só
+    de tempo (fica a mediana) e uma execução extra só para o pico de memória.
+
+    Parâmetros:
+    - funcao: um dos wrappers *_para_benchmark.
+    - grafo: GrafoMetro da instância.
+    - limite_de_tempo_segundos: limite de cada execução.
+
+    Retorno: ResultadoDaMedicao. Se alguma repetição estourar o limite, para na hora e
+    devolve interrompido_por_tempo=True com tempo = limite (cota inferior para o gráfico).
+    """
     tempos_das_repeticoes_segundos: list[float] = []
     resultado_do_algoritmo = None
+    # Repetições só de tempo, sem tracemalloc (ele deixaria o algoritmo mais lento)
     for _ in range(QUANTIDADE_DE_REPETICOES_DA_MEDICAO):
         saida = executar_em_processo_separado_com_timeout(funcao, grafo, False, limite_de_tempo_segundos)
         if saida is None:
@@ -1245,6 +1621,7 @@ def medir_execucao(funcao, grafo, limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRA
             )
         resultado_do_algoritmo, tempo_segundos, _ = saida
         tempos_das_repeticoes_segundos.append(tempo_segundos)
+    # Rodada extra só para memória; se estourar o tempo, o pico fica sem medição (None)
     saida_com_memoria = executar_em_processo_separado_com_timeout(funcao, grafo, True, limite_de_tempo_segundos)
     pico_de_memoria_kb = saida_com_memoria[2] if saida_com_memoria is not None else None
     return ResultadoDaMedicao(
@@ -1259,6 +1636,7 @@ def medir_execucao(funcao, grafo, limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRA
 
 
 ARQUIVO_DE_RESULTADOS_DO_BENCHMARK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resultados_benchmark.csv")
+# Colunas do CSV, uma linha por (problema, método, instância)
 COLUNAS_DO_CSV_DE_BENCHMARK = [
     "problema",
     "metodo",
@@ -1271,18 +1649,35 @@ COLUNAS_DO_CSV_DE_BENCHMARK = [
     "nos_explorados",
     "interrompido_por_tempo",
 ]
+# Problema (a) maximiza o ciclo; (b) e (c) minimizam (guichês e cores)
 PROBLEMAS_DE_MAXIMIZACAO = {"a"}
+# Ordem de preferência para obter o valor ótimo: força bruta, senão branch-and-bound
 METODOS_EXATOS = ("forca_bruta", "branch_and_bound")
 
 
 def ciclo_eh_valido(grafo: GrafoMetro, ciclo: list[str], estacao_de_partida: str) -> bool:
+    """
+    Valida uma solução do problema (a).
+
+    Parâmetros:
+    - grafo: GrafoMetro da instância.
+    - ciclo: lista de estações começando e terminando na partida.
+    - estacao_de_partida: estação em que o ciclo deve começar e terminar.
+
+    Retorno: True se o ciclo é simples, tem ao menos 3 estações distintas e todas as
+    estações consecutivas são ligadas por trechos. Ciclo vazio conta como válido
+    (significa "não achou"; a diferença para o ótimo já cobre esse caso).
+    """
     if not ciclo:
         return True
+    # Precisa começar e terminar na estação de partida
     if ciclo[0] != estacao_de_partida or ciclo[-1] != estacao_de_partida:
         return False
+    # Pelo menos 3 estações e nenhuma repetida
     estacoes_sem_o_retorno = ciclo[:-1]
     if len(estacoes_sem_o_retorno) < 3 or len(set(estacoes_sem_o_retorno)) != len(estacoes_sem_o_retorno):
         return False
+    # Todo par consecutivo precisa ser um trecho do grafo
     return all(
         estacao_seguinte in grafo.adjacencias.get(estacao_atual, {})
         for estacao_atual, estacao_seguinte in zip(ciclo, ciclo[1:])
@@ -1290,6 +1685,16 @@ def ciclo_eh_valido(grafo: GrafoMetro, ciclo: list[str], estacao_de_partida: str
 
 
 def solucao_eh_valida(problema: str, instancia: InstanciaDeBenchmark, solucao) -> bool:
+    """
+    Valida a solução de qualquer problema, fora do tempo medido.
+
+    Parâmetros:
+    - problema: "a", "b" ou "c".
+    - instancia: instância em que a solução foi obtida.
+    - solucao: ciclo (a), lista de estações com guichê (b) ou cor por estação (c).
+
+    Retorno: True se a solução respeita as regras do problema.
+    """
     if problema == "a":
         return ciclo_eh_valido(instancia.grafo, solucao, instancia.estacao_de_partida_do_problema_a)
     adjacencia = extrair_adjacencia_simples(instancia.grafo)
@@ -1299,6 +1704,9 @@ def solucao_eh_valida(problema: str, instancia: InstanciaDeBenchmark, solucao) -
 
 
 def formatar_valor_para_csv(valor) -> str:
+    """
+    Converte um valor para texto do CSV: None vira vazio e float fica com 6 casas decimais.
+    """
     if valor is None:
         return ""
     if isinstance(valor, float):
@@ -1307,6 +1715,14 @@ def formatar_valor_para_csv(valor) -> str:
 
 
 def montar_linha_do_csv(problema, metodo, instancia: InstanciaDeBenchmark, medicao: ResultadoDaMedicao) -> list[str]:
+    """
+    Parâmetros:
+    - problema, metodo: identificam o algoritmo medido.
+    - instancia: instância usada.
+    - medicao: resultado da medição.
+
+    Retorno: valores já formatados, na ordem de COLUNAS_DO_CSV_DE_BENCHMARK.
+    """
     valores = [
         problema,
         metodo,
@@ -1323,6 +1739,10 @@ def montar_linha_do_csv(problema, metodo, instancia: InstanciaDeBenchmark, medic
 
 
 def descrever_medicao(medicao: ResultadoDaMedicao) -> str:
+    """
+    Retorno: resumo de uma medição em uma linha (resultado, tempo em ms, memória e nós)
+    para o acompanhamento no terminal.
+    """
     if medicao.interrompido_por_tempo:
         return f"interrompido por tempo (>= {medicao.tempo_mediano_segundos:.0f} s)"
     pico_de_memoria = f"{medicao.pico_de_memoria_kb:.1f} KB" if medicao.pico_de_memoria_kb is not None else "sem medição"
@@ -1333,10 +1753,20 @@ def descrever_medicao(medicao: ResultadoDaMedicao) -> str:
 
 
 def listar_problemas_do_benchmark() -> list[str]:
+    """Retorno: problemas presentes em ALGORITMOS_PARA_BENCHMARK, em ordem ("a", "b", "c")."""
     return sorted({problema for problema, _, _ in ALGORITMOS_PARA_BENCHMARK})
 
 
 def obter_valor_otimo(medicoes, problema, quantidade_de_linhas):
+    """
+    Parâmetros:
+    - medicoes: dict (problema, método, k) -> ResultadoDaMedicao.
+    - problema: "a", "b" ou "c".
+    - quantidade_de_linhas: k da instância.
+
+    Retorno: valor ótimo da força bruta se ela terminou, senão do branch-and-bound;
+    None se os dois métodos exatos foram interrompidos.
+    """
     for metodo in METODOS_EXATOS:
         medicao = medicoes.get((problema, metodo, quantidade_de_linhas))
         if medicao is not None and not medicao.interrompido_por_tempo:
@@ -1345,6 +1775,15 @@ def obter_valor_otimo(medicoes, problema, quantidade_de_linhas):
 
 
 def conferir_forca_bruta_contra_branch_and_bound(instancias, medicoes) -> list[str]:
+    """
+    Confere se os dois métodos exatos dão o mesmo valor em cada instância e imprime o resumo.
+
+    Parâmetros:
+    - instancias: lista de InstanciaDeBenchmark.
+    - medicoes: dict (problema, método, k) -> ResultadoDaMedicao.
+
+    Retorno: lista de textos descrevendo cada divergência (vazia se tudo bateu).
+    """
     print("\n=== Conferência: força bruta x branch-and-bound ===")
     divergencias = []
     quantidade_de_conferencias = 0
@@ -1353,6 +1792,7 @@ def conferir_forca_bruta_contra_branch_and_bound(instancias, medicoes) -> list[s
             k = instancia.quantidade_de_linhas
             medicao_da_forca_bruta = medicoes[(problema, "forca_bruta", k)]
             medicao_do_branch_and_bound = medicoes[(problema, "branch_and_bound", k)]
+            # Só dá para comparar quando os dois terminaram dentro do limite
             if medicao_da_forca_bruta.interrompido_por_tempo or medicao_do_branch_and_bound.interrompido_por_tempo:
                 continue
             quantidade_de_conferencias += 1
@@ -1368,6 +1808,16 @@ def conferir_forca_bruta_contra_branch_and_bound(instancias, medicoes) -> list[s
 
 
 def conferir_heuristicas(instancias, medicoes) -> list[str]:
+    """
+    Valida a solução de cada heurística e compara o seu valor com o ótimo, imprimindo
+    a diferença absoluta e percentual.
+
+    Parâmetros:
+    - instancias: lista de InstanciaDeBenchmark.
+    - medicoes: dict (problema, método, k) -> ResultadoDaMedicao.
+
+    Retorno: lista "problema (x) k=..." das heurísticas com solução inválida.
+    """
     print("\n=== Conferência: heurísticas ===")
     heuristicas_com_solucao_invalida = []
     for problema in listar_problemas_do_benchmark():
@@ -1384,6 +1834,7 @@ def conferir_heuristicas(instancias, medicoes) -> list[str]:
             if valor_otimo is None:
                 comparacao_com_otimo = "ótimo desconhecido (métodos exatos interrompidos)"
             else:
+                # Diferença sempre >= 0: em (a) a heurística acha menos, em (b)/(c) acha mais
                 diferenca_para_otimo = (
                     valor_otimo - medicao_da_heuristica.resultado
                     if problema in PROBLEMAS_DE_MAXIMIZACAO
@@ -1401,6 +1852,13 @@ def conferir_heuristicas(instancias, medicoes) -> list[str]:
 
 
 def resumir_interrupcoes_da_forca_bruta(instancias, medicoes) -> None:
+    """
+    Imprime, para cada problema, em quais instâncias (k) a força bruta estourou o limite.
+
+    Parâmetros:
+    - instancias: lista de InstanciaDeBenchmark.
+    - medicoes: dict (problema, método, k) -> ResultadoDaMedicao.
+    """
     print("\n=== Força bruta interrompida por tempo ===")
     for problema in listar_problemas_do_benchmark():
         quantidades_de_linhas_interrompidas = [
@@ -1413,6 +1871,13 @@ def resumir_interrupcoes_da_forca_bruta(instancias, medicoes) -> None:
 
 
 def executar_bateria_de_benchmark(limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRAO_SEGUNDOS) -> None:
+    """
+    Ponto de entrada do modo --benchmark: mede os 9 algoritmos em todas as instâncias,
+    grava o CSV, faz as conferências e gera os arquivos .dat dos gráficos.
+
+    Parâmetros:
+    - limite_de_tempo_segundos: limite de cada execução (padrão 60 s, ou --limite N).
+    """
     instancias = gerar_instancias_para_benchmark()
     medicoes = {}
     print(f"Limite de tempo por execução: {limite_de_tempo_segundos:.0f} s", flush=True)
@@ -1424,6 +1889,7 @@ def executar_bateria_de_benchmark(limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRA
                 medicao = medir_execucao(funcao, instancia.grafo, limite_de_tempo_segundos)
                 medicoes[(problema, metodo, instancia.quantidade_de_linhas)] = medicao
                 escritor_csv.writerow(montar_linha_do_csv(problema, metodo, instancia, medicao))
+                # Grava linha a linha: se a bateria longa cair, os dados já medidos ficam salvos
                 arquivo_csv.flush()
                 print(
                     f"k={instancia.quantidade_de_linhas:2d} ({problema}) {metodo:16s} {descrever_medicao(medicao)}",
@@ -1437,15 +1903,23 @@ def executar_bateria_de_benchmark(limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRA
 
 
 PASTA_DOS_ARQUIVOS_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graficos")
+# (método no CSV, sufixo da coluna no .dat): gera tempo_fb, tempo_bb, tempo_heuristica...
 METODOS_NAS_COLUNAS_DO_DAT = [
     ("forca_bruta", "fb"),
     ("branch_and_bound", "bb"),
     ("heuristica", "heuristica"),
 ]
+# Tempo de execução interrompida: o pgfplots não desenha "nan", o relatório marca "> 60 s"
 VALOR_SEM_TEMPO_NO_DAT = "nan"
 
 
 def ler_resultados_do_csv(arquivo_csv: str) -> dict[tuple[str, str, int], dict[str, str]]:
+    """
+    Parâmetros:
+    - arquivo_csv: caminho do CSV gerado pelo benchmark.
+
+    Retorno: dict (problema, método, k) -> linha do CSV (dict coluna -> texto).
+    """
     with open(arquivo_csv, "r", encoding="utf-8", newline="") as arquivo:
         return {
             (linha["problema"], linha["metodo"], int(linha["quantidade_de_linhas"])): linha
@@ -1454,6 +1928,12 @@ def ler_resultados_do_csv(arquivo_csv: str) -> dict[tuple[str, str, int], dict[s
 
 
 def formatar_tempo_e_interrupcao_para_dat(linha_do_csv: dict[str, str] | None) -> tuple[str, str]:
+    """
+    Parâmetros:
+    - linha_do_csv: linha do CSV de um algoritmo em uma instância, ou None se não existe.
+
+    Retorno: (tempo em segundos em notação científica ou "nan", "1" se interrompido senão "0").
+    """
     if linha_do_csv is None:
         return VALOR_SEM_TEMPO_NO_DAT, "0"
     if linha_do_csv["interrompido_por_tempo"] == "True":
@@ -1464,6 +1944,17 @@ def formatar_tempo_e_interrupcao_para_dat(linha_do_csv: dict[str, str] | None) -
 def gerar_arquivos_dat_para_graficos(
     arquivo_csv: str = ARQUIVO_DE_RESULTADOS_DO_BENCHMARK, pasta_de_saida: str = PASTA_DOS_ARQUIVOS_DAT
 ) -> list[str]:
+    """
+    Gera um arquivo tempos_problema_X.dat por problema, a partir do CSV, para os gráficos
+    do relatório em pgfplots. Cada linha é uma instância (k) com o tempo e a flag de
+    interrupção de cada método. Ponto de entrada do modo --graficos (não refaz a bateria).
+
+    Parâmetros:
+    - arquivo_csv: CSV de resultados do benchmark.
+    - pasta_de_saida: pasta onde os .dat são gravados (criada se não existir).
+
+    Retorno: caminhos dos arquivos .dat gerados.
+    """
     resultados_por_chave = ler_resultados_do_csv(arquivo_csv)
     problemas = sorted({problema for problema, _, _ in resultados_por_chave})
     quantidades_de_linhas = sorted({k for _, _, k in resultados_por_chave})
@@ -1486,6 +1977,7 @@ def gerar_arquivos_dat_para_graficos(
                 + [tempo for tempo, _ in tempos_e_interrupcoes]
                 + [interrompido for _, interrompido in tempos_e_interrupcoes]
             )
+        # Alinha as colunas pela maior largura de cada uma, para o .dat ficar legível
         larguras_das_colunas = [max(len(linha[indice]) for linha in linhas_do_dat) for indice in range(len(cabecalho))]
         caminho_do_dat = os.path.join(pasta_de_saida, f"tempos_problema_{problema}.dat")
         with open(caminho_do_dat, "w", encoding="utf-8", newline="\n") as arquivo_dat:
@@ -1501,6 +1993,12 @@ def gerar_arquivos_dat_para_graficos(
 
 
 def ler_limite_de_tempo_dos_argumentos(argumentos: list[str]) -> float:
+    """
+    Parâmetros:
+    - argumentos: sys.argv.
+
+    Retorno: valor N de "--limite N" se informado, senão LIMITE_DE_TEMPO_PADRAO_SEGUNDOS.
+    """
     if "--limite" in argumentos:
         return float(argumentos[argumentos.index("--limite") + 1])
     return LIMITE_DE_TEMPO_PADRAO_SEGUNDOS
@@ -2272,8 +2770,10 @@ class InterfaceMetro(tk.Tk):
 # 8. PONTO DE ENTRADA DA APLICAÇÃO
 # ======================================================================================
 if __name__ == "__main__":
+    # Modo benchmark: python main.py --benchmark [--limite N]
     if "--benchmark" in sys.argv:
         executar_bateria_de_benchmark(ler_limite_de_tempo_dos_argumentos(sys.argv))
+    # Só regenera os .dat a partir do CSV existente: python main.py --graficos
     elif "--graficos" in sys.argv:
         gerar_arquivos_dat_para_graficos()
     else:
