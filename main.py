@@ -15,8 +15,15 @@ ESTRUTURA DE RESPONSABILIDADES:
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import time
+import csv
 import math
+import multiprocessing
+import os
+import queue
+import statistics
 import sys
+import traceback
+import tracemalloc
 from collections import deque
 from dataclasses import dataclass
 from itertools import combinations, permutations, product
@@ -1033,6 +1040,472 @@ def resolver_problema_b(grafo, metodo):
     return sorted(resultado.estacoes_com_guiche), tempo_ms, montar_mensagem_dos_guiches(adjacencia, resultado)
 
 
+QUANTIDADES_DE_LINHAS_DAS_INSTANCIAS = (2, 4, 6, 8, 10)
+PASTA_DAS_INSTANCIAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dados")
+
+
+@dataclass
+class InstanciaDeBenchmark:
+    quantidade_de_linhas: int
+    grafo: GrafoMetro
+    estacao_de_partida_do_problema_a: str
+    quantidade_de_estacoes: int
+    quantidade_de_trechos: int
+
+
+def gerar_instancia_com_primeiras_linhas(arquivo_de_estacoes, arquivo_de_linhas, quantidade_de_linhas) -> GrafoMetro:
+    grafo_completo = GrafoMetro()
+    carregar_arquivo_estacoes(arquivo_de_estacoes, grafo_completo)
+    carregar_arquivo_linhas(arquivo_de_linhas, grafo_completo)
+    linhas_na_ordem_do_arquivo: list[str] = []
+    for _, _, nome_linha, _ in grafo_completo.trechos:
+        if nome_linha not in linhas_na_ordem_do_arquivo:
+            linhas_na_ordem_do_arquivo.append(nome_linha)
+    linhas_escolhidas = set(linhas_na_ordem_do_arquivo[:quantidade_de_linhas])
+    trechos_das_linhas_escolhidas = [
+        trecho for trecho in grafo_completo.trechos if trecho[2] in linhas_escolhidas
+    ]
+    grafo_da_instancia = GrafoMetro()
+    for estacao_origem, estacao_destino, _, _ in trechos_das_linhas_escolhidas:
+        for estacao in (estacao_origem, estacao_destino):
+            if estacao not in grafo_da_instancia.estacoes:
+                coordenada_x, coordenada_y = grafo_completo.estacoes[estacao]
+                grafo_da_instancia.adicionar_estacao(estacao, coordenada_x, coordenada_y)
+    for estacao_origem, estacao_destino, nome_linha, cor in trechos_das_linhas_escolhidas:
+        grafo_da_instancia.adicionar_trecho(estacao_origem, estacao_destino, nome_linha, cor)
+    return grafo_da_instancia
+
+
+def escolher_estacao_de_maior_grau(grafo: GrafoMetro) -> str:
+    return min(grafo.obter_todos_os_vertices(), key=lambda estacao: (-grafo.grau(estacao), estacao))
+
+
+def contar_trechos_distintos(grafo: GrafoMetro) -> int:
+    return sum(grafo.grau(estacao) for estacao in grafo.obter_todos_os_vertices()) // 2
+
+
+def gerar_instancias_para_benchmark() -> list[InstanciaDeBenchmark]:
+    instancias = []
+    for quantidade_de_linhas in QUANTIDADES_DE_LINHAS_DAS_INSTANCIAS:
+        arquivo_de_estacoes = os.path.join(PASTA_DAS_INSTANCIAS, f"estacoes_{quantidade_de_linhas:02d}.txt")
+        arquivo_de_linhas = os.path.join(PASTA_DAS_INSTANCIAS, f"linhas_{quantidade_de_linhas:02d}.txt")
+        grafo = gerar_instancia_com_primeiras_linhas(arquivo_de_estacoes, arquivo_de_linhas, quantidade_de_linhas)
+        instancias.append(
+            InstanciaDeBenchmark(
+                quantidade_de_linhas=quantidade_de_linhas,
+                grafo=grafo,
+                estacao_de_partida_do_problema_a=escolher_estacao_de_maior_grau(grafo),
+                quantidade_de_estacoes=len(grafo.estacoes),
+                quantidade_de_trechos=contar_trechos_distintos(grafo),
+            )
+        )
+    return instancias
+
+
+LIMITE_DE_TEMPO_PADRAO_SEGUNDOS = 60.0
+QUANTIDADE_DE_REPETICOES_DA_MEDICAO = 3
+LIMITE_DE_TEMPO_PARA_INICIAR_PROCESSO_SEGUNDOS = 60.0
+
+
+@dataclass
+class ResultadoDoAlgoritmoParaBenchmark:
+    resultado: int
+    nos_explorados: int
+    solucao: object
+
+
+@dataclass
+class ResultadoDaMedicao:
+    resultado: int | None
+    tempo_mediano_segundos: float
+    pico_de_memoria_kb: float | None
+    nos_explorados: int | None
+    interrompido_por_tempo: bool
+    tempos_das_repeticoes_segundos: list[float]
+    solucao: object = None
+
+
+def contar_estacoes_do_ciclo(ciclo: list[str]) -> int:
+    return len(ciclo) - 1 if ciclo else 0
+
+
+def maior_ciclo_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    ciclo, _, permutacoes_avaliadas = forca_bruta_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), permutacoes_avaliadas, ciclo)
+
+
+def maior_ciclo_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    ciclo, _, nos_expandidos, _ = branch_and_bound_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), nos_expandidos, ciclo)
+
+
+def maior_ciclo_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    ciclo, _, passos = heuristica_maior_ciclo(grafo, escolher_estacao_de_maior_grau(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(contar_estacoes_do_ciclo(ciclo), passos, ciclo)
+
+
+def guiches_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = guiches_por_forca_bruta(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
+
+
+def guiches_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = guiches_por_branch_and_bound(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
+
+
+def guiches_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = guiches_por_guloso(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(len(resultado.estacoes_com_guiche), resultado.nos_explorados, resultado.estacoes_com_guiche)
+
+
+def coloracao_por_forca_bruta_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = colorir_por_forca_bruta(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
+
+
+def coloracao_por_branch_and_bound_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = colorir_por_branch_and_bound(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
+
+
+def coloracao_por_heuristica_para_benchmark(grafo: GrafoMetro) -> ResultadoDoAlgoritmoParaBenchmark:
+    resultado = colorir_por_welsh_powell(extrair_adjacencia_simples(grafo))
+    return ResultadoDoAlgoritmoParaBenchmark(resultado.quantidade_de_cores, resultado.nos_explorados, resultado.cor_por_estacao)
+
+
+ALGORITMOS_PARA_BENCHMARK = [
+    ("a", "forca_bruta", maior_ciclo_por_forca_bruta_para_benchmark),
+    ("a", "branch_and_bound", maior_ciclo_por_branch_and_bound_para_benchmark),
+    ("a", "heuristica", maior_ciclo_por_heuristica_para_benchmark),
+    ("b", "forca_bruta", guiches_por_forca_bruta_para_benchmark),
+    ("b", "branch_and_bound", guiches_por_branch_and_bound_para_benchmark),
+    ("b", "heuristica", guiches_por_heuristica_para_benchmark),
+    ("c", "forca_bruta", coloracao_por_forca_bruta_para_benchmark),
+    ("c", "branch_and_bound", coloracao_por_branch_and_bound_para_benchmark),
+    ("c", "heuristica", coloracao_por_heuristica_para_benchmark),
+]
+
+
+def executar_algoritmo_no_processo_filho(funcao, grafo, deve_medir_memoria, fila_de_mensagens) -> None:
+    fila_de_mensagens.put(("iniciado", None))
+    try:
+        if deve_medir_memoria:
+            tracemalloc.start()
+        inicio = time.perf_counter()
+        resultado_do_algoritmo = funcao(grafo)
+        tempo_segundos = time.perf_counter() - inicio
+        pico_de_memoria_kb = None
+        if deve_medir_memoria:
+            _, pico_de_memoria_bytes = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            pico_de_memoria_kb = pico_de_memoria_bytes / 1024.0
+        fila_de_mensagens.put(("concluido", (resultado_do_algoritmo, tempo_segundos, pico_de_memoria_kb)))
+    except Exception:
+        fila_de_mensagens.put(("erro", traceback.format_exc()))
+
+
+def executar_em_processo_separado_com_timeout(funcao, grafo, deve_medir_memoria, limite_de_tempo_segundos):
+    contexto = multiprocessing.get_context("spawn")
+    fila_de_mensagens = contexto.Queue()
+    processo = contexto.Process(
+        target=executar_algoritmo_no_processo_filho,
+        args=(funcao, grafo, deve_medir_memoria, fila_de_mensagens),
+        daemon=True,
+    )
+    processo.start()
+    try:
+        fila_de_mensagens.get(timeout=LIMITE_DE_TEMPO_PARA_INICIAR_PROCESSO_SEGUNDOS)
+        tipo_da_mensagem, conteudo = fila_de_mensagens.get(timeout=limite_de_tempo_segundos)
+    except queue.Empty:
+        return None
+    finally:
+        if processo.is_alive():
+            processo.terminate()
+        processo.join()
+        fila_de_mensagens.close()
+    if tipo_da_mensagem == "erro":
+        raise RuntimeError(f"Falha ao executar {funcao.__name__}:\n{conteudo}")
+    return conteudo
+
+
+def medir_execucao(funcao, grafo, limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRAO_SEGUNDOS) -> ResultadoDaMedicao:
+    tempos_das_repeticoes_segundos: list[float] = []
+    resultado_do_algoritmo = None
+    for _ in range(QUANTIDADE_DE_REPETICOES_DA_MEDICAO):
+        saida = executar_em_processo_separado_com_timeout(funcao, grafo, False, limite_de_tempo_segundos)
+        if saida is None:
+            return ResultadoDaMedicao(
+                resultado=None,
+                tempo_mediano_segundos=limite_de_tempo_segundos,
+                pico_de_memoria_kb=None,
+                nos_explorados=None,
+                interrompido_por_tempo=True,
+                tempos_das_repeticoes_segundos=tempos_das_repeticoes_segundos,
+            )
+        resultado_do_algoritmo, tempo_segundos, _ = saida
+        tempos_das_repeticoes_segundos.append(tempo_segundos)
+    saida_com_memoria = executar_em_processo_separado_com_timeout(funcao, grafo, True, limite_de_tempo_segundos)
+    pico_de_memoria_kb = saida_com_memoria[2] if saida_com_memoria is not None else None
+    return ResultadoDaMedicao(
+        resultado=resultado_do_algoritmo.resultado,
+        tempo_mediano_segundos=statistics.median(tempos_das_repeticoes_segundos),
+        pico_de_memoria_kb=pico_de_memoria_kb,
+        nos_explorados=resultado_do_algoritmo.nos_explorados,
+        interrompido_por_tempo=False,
+        tempos_das_repeticoes_segundos=tempos_das_repeticoes_segundos,
+        solucao=resultado_do_algoritmo.solucao,
+    )
+
+
+ARQUIVO_DE_RESULTADOS_DO_BENCHMARK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resultados_benchmark.csv")
+COLUNAS_DO_CSV_DE_BENCHMARK = [
+    "problema",
+    "metodo",
+    "quantidade_de_linhas",
+    "quantidade_de_estacoes",
+    "quantidade_de_trechos",
+    "resultado",
+    "tempo_mediano_segundos",
+    "pico_de_memoria_kb",
+    "nos_explorados",
+    "interrompido_por_tempo",
+]
+PROBLEMAS_DE_MAXIMIZACAO = {"a"}
+METODOS_EXATOS = ("forca_bruta", "branch_and_bound")
+
+
+def ciclo_eh_valido(grafo: GrafoMetro, ciclo: list[str], estacao_de_partida: str) -> bool:
+    if not ciclo:
+        return True
+    if ciclo[0] != estacao_de_partida or ciclo[-1] != estacao_de_partida:
+        return False
+    estacoes_sem_o_retorno = ciclo[:-1]
+    if len(estacoes_sem_o_retorno) < 3 or len(set(estacoes_sem_o_retorno)) != len(estacoes_sem_o_retorno):
+        return False
+    return all(
+        estacao_seguinte in grafo.adjacencias.get(estacao_atual, {})
+        for estacao_atual, estacao_seguinte in zip(ciclo, ciclo[1:])
+    )
+
+
+def solucao_eh_valida(problema: str, instancia: InstanciaDeBenchmark, solucao) -> bool:
+    if problema == "a":
+        return ciclo_eh_valido(instancia.grafo, solucao, instancia.estacao_de_partida_do_problema_a)
+    adjacencia = extrair_adjacencia_simples(instancia.grafo)
+    if problema == "b":
+        return guiches_atendem_todas(adjacencia, solucao)
+    return coloracao_eh_valida(adjacencia, solucao)
+
+
+def formatar_valor_para_csv(valor) -> str:
+    if valor is None:
+        return ""
+    if isinstance(valor, float):
+        return f"{valor:.6f}"
+    return str(valor)
+
+
+def montar_linha_do_csv(problema, metodo, instancia: InstanciaDeBenchmark, medicao: ResultadoDaMedicao) -> list[str]:
+    valores = [
+        problema,
+        metodo,
+        instancia.quantidade_de_linhas,
+        instancia.quantidade_de_estacoes,
+        instancia.quantidade_de_trechos,
+        medicao.resultado,
+        medicao.tempo_mediano_segundos,
+        medicao.pico_de_memoria_kb,
+        medicao.nos_explorados,
+        medicao.interrompido_por_tempo,
+    ]
+    return [formatar_valor_para_csv(valor) for valor in valores]
+
+
+def descrever_medicao(medicao: ResultadoDaMedicao) -> str:
+    if medicao.interrompido_por_tempo:
+        return f"interrompido por tempo (>= {medicao.tempo_mediano_segundos:.0f} s)"
+    pico_de_memoria = f"{medicao.pico_de_memoria_kb:.1f} KB" if medicao.pico_de_memoria_kb is not None else "sem medição"
+    return (
+        f"resultado={medicao.resultado} tempo={medicao.tempo_mediano_segundos * 1000:.3f} ms "
+        f"memória={pico_de_memoria} nós={medicao.nos_explorados}"
+    )
+
+
+def listar_problemas_do_benchmark() -> list[str]:
+    return sorted({problema for problema, _, _ in ALGORITMOS_PARA_BENCHMARK})
+
+
+def obter_valor_otimo(medicoes, problema, quantidade_de_linhas):
+    for metodo in METODOS_EXATOS:
+        medicao = medicoes.get((problema, metodo, quantidade_de_linhas))
+        if medicao is not None and not medicao.interrompido_por_tempo:
+            return medicao.resultado
+    return None
+
+
+def conferir_forca_bruta_contra_branch_and_bound(instancias, medicoes) -> list[str]:
+    print("\n=== Conferência: força bruta x branch-and-bound ===")
+    divergencias = []
+    quantidade_de_conferencias = 0
+    for problema in listar_problemas_do_benchmark():
+        for instancia in instancias:
+            k = instancia.quantidade_de_linhas
+            medicao_da_forca_bruta = medicoes[(problema, "forca_bruta", k)]
+            medicao_do_branch_and_bound = medicoes[(problema, "branch_and_bound", k)]
+            if medicao_da_forca_bruta.interrompido_por_tempo or medicao_do_branch_and_bound.interrompido_por_tempo:
+                continue
+            quantidade_de_conferencias += 1
+            if medicao_da_forca_bruta.resultado != medicao_do_branch_and_bound.resultado:
+                divergencias.append(
+                    f"DIVERGÊNCIA problema ({problema}) k={k}: força bruta={medicao_da_forca_bruta.resultado}, "
+                    f"branch-and-bound={medicao_do_branch_and_bound.resultado}"
+                )
+    for divergencia in divergencias:
+        print(divergencia)
+    print(f"{quantidade_de_conferencias} instâncias conferidas, {len(divergencias)} divergência(s).")
+    return divergencias
+
+
+def conferir_heuristicas(instancias, medicoes) -> list[str]:
+    print("\n=== Conferência: heurísticas ===")
+    heuristicas_com_solucao_invalida = []
+    for problema in listar_problemas_do_benchmark():
+        for instancia in instancias:
+            k = instancia.quantidade_de_linhas
+            medicao_da_heuristica = medicoes[(problema, "heuristica", k)]
+            if medicao_da_heuristica.interrompido_por_tempo:
+                print(f"problema ({problema}) k={k}: heurística interrompida por tempo")
+                continue
+            solucao_valida = solucao_eh_valida(problema, instancia, medicao_da_heuristica.solucao)
+            if not solucao_valida:
+                heuristicas_com_solucao_invalida.append(f"problema ({problema}) k={k}")
+            valor_otimo = obter_valor_otimo(medicoes, problema, k)
+            if valor_otimo is None:
+                comparacao_com_otimo = "ótimo desconhecido (métodos exatos interrompidos)"
+            else:
+                diferenca_para_otimo = (
+                    valor_otimo - medicao_da_heuristica.resultado
+                    if problema in PROBLEMAS_DE_MAXIMIZACAO
+                    else medicao_da_heuristica.resultado - valor_otimo
+                )
+                percentual_da_diferenca = 100.0 * diferenca_para_otimo / valor_otimo if valor_otimo else 0.0
+                comparacao_com_otimo = f"ótimo={valor_otimo} diferença={diferenca_para_otimo} ({percentual_da_diferenca:.1f}%)"
+            print(
+                f"problema ({problema}) k={k}: heurística={medicao_da_heuristica.resultado} "
+                f"{'válida' if solucao_valida else 'INVÁLIDA'} {comparacao_com_otimo}"
+            )
+    if heuristicas_com_solucao_invalida:
+        print("Heurísticas com solução INVÁLIDA: " + ", ".join(heuristicas_com_solucao_invalida))
+    return heuristicas_com_solucao_invalida
+
+
+def resumir_interrupcoes_da_forca_bruta(instancias, medicoes) -> None:
+    print("\n=== Força bruta interrompida por tempo ===")
+    for problema in listar_problemas_do_benchmark():
+        quantidades_de_linhas_interrompidas = [
+            instancia.quantidade_de_linhas
+            for instancia in instancias
+            if medicoes[(problema, "forca_bruta", instancia.quantidade_de_linhas)].interrompido_por_tempo
+        ]
+        descricao = ", ".join(f"k={k}" for k in quantidades_de_linhas_interrompidas) or "terminou em todas"
+        print(f"problema ({problema}): {descricao}")
+
+
+def executar_bateria_de_benchmark(limite_de_tempo_segundos=LIMITE_DE_TEMPO_PADRAO_SEGUNDOS) -> None:
+    instancias = gerar_instancias_para_benchmark()
+    medicoes = {}
+    print(f"Limite de tempo por execução: {limite_de_tempo_segundos:.0f} s", flush=True)
+    with open(ARQUIVO_DE_RESULTADOS_DO_BENCHMARK, "w", encoding="utf-8", newline="") as arquivo_csv:
+        escritor_csv = csv.writer(arquivo_csv)
+        escritor_csv.writerow(COLUNAS_DO_CSV_DE_BENCHMARK)
+        for instancia in instancias:
+            for problema, metodo, funcao in ALGORITMOS_PARA_BENCHMARK:
+                medicao = medir_execucao(funcao, instancia.grafo, limite_de_tempo_segundos)
+                medicoes[(problema, metodo, instancia.quantidade_de_linhas)] = medicao
+                escritor_csv.writerow(montar_linha_do_csv(problema, metodo, instancia, medicao))
+                arquivo_csv.flush()
+                print(
+                    f"k={instancia.quantidade_de_linhas:2d} ({problema}) {metodo:16s} {descrever_medicao(medicao)}",
+                    flush=True,
+                )
+    print(f"\nCSV gravado em {ARQUIVO_DE_RESULTADOS_DO_BENCHMARK}")
+    conferir_forca_bruta_contra_branch_and_bound(instancias, medicoes)
+    conferir_heuristicas(instancias, medicoes)
+    resumir_interrupcoes_da_forca_bruta(instancias, medicoes)
+    gerar_arquivos_dat_para_graficos()
+
+
+PASTA_DOS_ARQUIVOS_DAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graficos")
+METODOS_NAS_COLUNAS_DO_DAT = [
+    ("forca_bruta", "fb"),
+    ("branch_and_bound", "bb"),
+    ("heuristica", "heuristica"),
+]
+VALOR_SEM_TEMPO_NO_DAT = "nan"
+
+
+def ler_resultados_do_csv(arquivo_csv: str) -> dict[tuple[str, str, int], dict[str, str]]:
+    with open(arquivo_csv, "r", encoding="utf-8", newline="") as arquivo:
+        return {
+            (linha["problema"], linha["metodo"], int(linha["quantidade_de_linhas"])): linha
+            for linha in csv.DictReader(arquivo)
+        }
+
+
+def formatar_tempo_e_interrupcao_para_dat(linha_do_csv: dict[str, str] | None) -> tuple[str, str]:
+    if linha_do_csv is None:
+        return VALOR_SEM_TEMPO_NO_DAT, "0"
+    if linha_do_csv["interrompido_por_tempo"] == "True":
+        return VALOR_SEM_TEMPO_NO_DAT, "1"
+    return f"{float(linha_do_csv['tempo_mediano_segundos']):.6e}", "0"
+
+
+def gerar_arquivos_dat_para_graficos(
+    arquivo_csv: str = ARQUIVO_DE_RESULTADOS_DO_BENCHMARK, pasta_de_saida: str = PASTA_DOS_ARQUIVOS_DAT
+) -> list[str]:
+    resultados_por_chave = ler_resultados_do_csv(arquivo_csv)
+    problemas = sorted({problema for problema, _, _ in resultados_por_chave})
+    quantidades_de_linhas = sorted({k for _, _, k in resultados_por_chave})
+    cabecalho = (
+        ["linhas"]
+        + [f"tempo_{sufixo}" for _, sufixo in METODOS_NAS_COLUNAS_DO_DAT]
+        + [f"interrompido_{sufixo}" for _, sufixo in METODOS_NAS_COLUNAS_DO_DAT]
+    )
+    os.makedirs(pasta_de_saida, exist_ok=True)
+    arquivos_gerados = []
+    for problema in problemas:
+        linhas_do_dat = [cabecalho]
+        for k in quantidades_de_linhas:
+            tempos_e_interrupcoes = [
+                formatar_tempo_e_interrupcao_para_dat(resultados_por_chave.get((problema, metodo, k)))
+                for metodo, _ in METODOS_NAS_COLUNAS_DO_DAT
+            ]
+            linhas_do_dat.append(
+                [str(k)]
+                + [tempo for tempo, _ in tempos_e_interrupcoes]
+                + [interrompido for _, interrompido in tempos_e_interrupcoes]
+            )
+        larguras_das_colunas = [max(len(linha[indice]) for linha in linhas_do_dat) for indice in range(len(cabecalho))]
+        caminho_do_dat = os.path.join(pasta_de_saida, f"tempos_problema_{problema}.dat")
+        with open(caminho_do_dat, "w", encoding="utf-8", newline="\n") as arquivo_dat:
+            for linha in linhas_do_dat:
+                arquivo_dat.write(
+                    "  ".join(valor.ljust(largura) for valor, largura in zip(linha, larguras_das_colunas)).rstrip() + "\n"
+                )
+        arquivos_gerados.append(caminho_do_dat)
+    print("\nArquivos .dat para pgfplots:")
+    for caminho_do_dat in arquivos_gerados:
+        print(f"  {caminho_do_dat}")
+    return arquivos_gerados
+
+
+def ler_limite_de_tempo_dos_argumentos(argumentos: list[str]) -> float:
+    if "--limite" in argumentos:
+        return float(argumentos[argumentos.index("--limite") + 1])
+    return LIMITE_DE_TEMPO_PADRAO_SEGUNDOS
+
+
 # ======================================================================================
 # 7. INTERFACE GRÁFICA (TKINTER) - INTEGRANTE 1
 # ======================================================================================
@@ -1799,5 +2272,10 @@ class InterfaceMetro(tk.Tk):
 # 8. PONTO DE ENTRADA DA APLICAÇÃO
 # ======================================================================================
 if __name__ == "__main__":
-    app = InterfaceMetro()
-    app.mainloop()
+    if "--benchmark" in sys.argv:
+        executar_bateria_de_benchmark(ler_limite_de_tempo_dos_argumentos(sys.argv))
+    elif "--graficos" in sys.argv:
+        gerar_arquivos_dat_para_graficos()
+    else:
+        app = InterfaceMetro()
+        app.mainloop()

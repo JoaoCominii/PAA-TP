@@ -1,0 +1,6 @@
+linhas  tempo_fb      tempo_bb      tempo_heuristica  interrompido_fb  interrompido_bb  interrompido_heuristica
+2       5.600000e-05  9.300000e-05  5.800000e-05      0                0                0
+4       2.580000e-04  1.500000e-04  6.900000e-05      0                0                0
+6       2.348700e-02  4.000000e-04  1.100000e-04      0                0                0
+8       nan           1.679000e-03  2.240000e-04      1                0                0
+10      nan           1.318200e-02  3.310000e-04      1                0                0
