@@ -2,6 +2,11 @@
 
 Aplicação desenvolvida para a disciplina de **Projeto e Análise de Algoritmos (PAA)** do ICEI / PUC Minas (Prof. Alexei Machado).
 
+### 👥 Integrantes do Grupo
+- **Henrique Lourenço Pinto Coelho**
+- **João Comini César de Andrade**
+- **Rafael Rehfeld Martins de Oliveira**
+
 O projeto implementa uma interface gráfica nativa em **Python com Tkinter** e resolve três problemas clássicos de teoria dos grafos através de três paradigmas algorítmicos:
 1. **Força Bruta** (Busca Exaustiva)
 2. **Branch-and-Bound** (Busca com podas por limitantes)

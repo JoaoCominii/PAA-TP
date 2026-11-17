@@ -5,6 +5,11 @@ DISCIPLINA: PROJETO E ANÁLISE DE ALGORITMOS (PAA)
 PROFESSOR: ALEXEI MACHADO
 TRABALHO PRÁTICO: O METRÔ DE PARIS
 ========================================================================================
+INTEGRANTES DO GRUPO:
+- Henrique Lourenço Pinto Coelho
+- João Comini César de Andrade
+- Rafael Rehfeld Martins de Oliveira
+========================================================================================
 ESTRUTURA DE RESPONSABILIDADES:
 - Integrante 1: Interface Gráfica (Tkinter) & Problema (a) [Maior Ciclo Simples]
 - Integrante 2: Modelagem de Dados, Parser & Problema (b) [Conjunto Dominante Mínimo]
